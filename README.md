@@ -91,11 +91,41 @@ real tape recording: play it into a real Dragon) and `tapes/NAME.cas`.
 An existing name is never overwritten: the new one becomes `NAME-2`,
 `NAME-3` and so on. Both kinds load in XRoar, and XRoar's load here.
 
-## Not yet
+## Roadmap
 
-Fast tape loading,
-snapshots, DragonDOS disks, joysticks, the SAM's fast-CPU poke
-(`POKE 65495,0`) and cartridges.
+Done so far: the 6809 with real cycle timing (checked against XRoar),
+the PIAs, SAM and 50 Hz interrupt, HDMI picture with every text,
+semigraphics and graphics mode and the border, HDMI sound, USB keyboards,
+the cassette deck (real-time CAS/WAV loading, WAV+CAS saving), Wi-Fi time,
+the admin screen with soft/hard reset and safe shutdown. Tested with
+Dunjunz, Blockdown, Return of the Beast and the CyD 3-channel music player.
+
+Next, roughly in order:
+
+- **Fast tape loading**: an admin switch for instant `CLOAD`/`CLOADM`
+  (intercepting the ROM's byte and bit readers, as XRoar does); real time
+  stays the default.
+- **Clean copies of real tapes**: while a WAV recording loads, write a clean
+  `.cas` of what was read (like XRoar's tape rewrite).
+- **A bigger card**: the image's FAT partition is 64 MB; WAV tapes fill it.
+- **Snapshots**: save and restore the whole machine from the admin screen.
+- **Printer to a file**: `PRINT#-2` / `LLIST` currently wait for a printer
+  that isn't there; send them to `printer.txt` on the card.
+- **DragonDOS disks**: the WD2797 floppy controller and cartridge port, with
+  `.vdk` / `.dsk` images and your own DragonDOS ROM.
+- **Wi-Fi file page**: copy tapes and disks to and from the card from a
+  browser (the Zero W already joins Wi-Fi for the clock).
+- **Joysticks**: USB gamepads as the Dragon's joysticks (the DAC comparator
+  on PIA0 PA7) and fire buttons.
+- Later: the SAM's fast-CPU poke (`POKE 65495,0`), cartridges, the Dragon 64
+  and Tandy CoCo ROMs, sound on the Pi 5 (Circle has no HDMI sound there).
+
+## Shared core
+
+`src/core/` (CPU, PIAs, SAM, VDG, tape) is also the core of
+[6809Emulator](https://github.com/dylan7474/6809Emulator), the terminal
+version. Fix it here, then run `tools/sync-core.sh` to copy it across and
+commit there too.
 
 ## SD card
 

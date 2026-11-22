@@ -42,6 +42,11 @@ void dragon_reset(void);
 // sync pulses (the frame pulse is BASIC's 50 Hz IRQ).
 void dragon_run_frame(void);
 
+// One instruction (or an interrupt being taken) with the same timing,
+// interrupts and sync pulses as dragon_run_frame(); trace = print it
+// with the registers (for debugging and the terminal version's trace mode)
+void dragon_step(bool trace);
+
 uint64_t dragon_cycles(void);		// CPU cycles run since dragon_init
 unsigned dragon_sam(void);		// the SAM's 16 control bits (bit 3-9 = display start / 512)
 unsigned dragon_irqs(void);		// IRQs taken since dragon_init
@@ -74,6 +79,11 @@ void dragon_regs(DragonRegs *regs);
 #define DRAGON_KEY_BREAK_COL	2
 #define DRAGON_KEY_SHIFT_ROW	6
 #define DRAGON_KEY_SHIFT_COL	7
+#define DRAGON_KEY_UP_ROW	5	// cursor keys: row 5, columns 3-6
+#define DRAGON_KEY_UP_COL	3
+#define DRAGON_KEY_DOWN_COL	4
+#define DRAGON_KEY_LEFT_COL	5
+#define DRAGON_KEY_RIGHT_COL	6
 
 // Live keyboard: matrix[col] has a 0 bit for each row held down
 // (0x7F = nothing in that column).  Used by the Pi's USB keyboard.
@@ -84,6 +94,7 @@ void dragon_set_matrix(const uint8_t matrix[8]);
 // Used for tests (like the ncurses version's --inject).
 void dragon_type(const char *text);
 bool dragon_typing(void);		// still keys waiting to be typed
+void dragon_type_key(int row, int col, bool shift);	// one key by matrix position, typed
 
 // Which key gives this character: false if the Dragon has no such key.
 bool dragon_char_key(char c, int *row, int *col, bool *shift);

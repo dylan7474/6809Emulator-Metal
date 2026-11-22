@@ -1,0 +1,16 @@
+name: build
+
+on: [push, pull_request]
+
+# The PC build of the same core, video, tape and keyboard code the Pi
+# kernels use.  The Pi kernels themselves need the ARM toolchains and a
+# circle-stdlib build (~10 min) and are built locally.
+jobs:
+  pc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make pc build/pc/keymap_test PC_CFLAGS="-std=gnu11 -O2 -Wall -Wextra -Werror"
+      - run: build/pc/keymap_test
+      - run: tests/pc_smoke.sh          # skips: no ROM is (or may be) in the repo
+      - run: python3 -m py_compile tools/bin2cas.py

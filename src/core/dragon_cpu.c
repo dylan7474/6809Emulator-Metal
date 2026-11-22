@@ -72,6 +72,8 @@ static inline void set_D(uint16_t val)
 
 // Dragon 32 Keyboard Matrix & Input Emulation
 
+static bool trace_on;			// print each instruction (dragon_step)
+
 // CPU wait states: SYNC waits for any interrupt line, CWAI has already
 // stacked the registers and waits for an unmasked interrupt
 static bool cpu_sync, cpu_cwai;
@@ -2602,7 +2604,7 @@ static int cpu_step(void)
 		}
 	}
 
-	step_cpu(true);
+	step_cpu(!trace_on);
 
 	if (long_branch && PC != (uint16_t)(pc0 + 4))
 	{
@@ -2701,6 +2703,7 @@ static void audio_run(int cycles, float level)
 // ---- Platform API (dragon.h) ---------------------------------------------
 
 static unsigned frame_cycle;		// cycles into this 50 Hz frame
+static unsigned frame_line;		// video line the frame is on (0-311)
 static uint64_t total_cycles;
 static unsigned irq_count;		// IRQs taken (tests)
 
@@ -2721,6 +2724,7 @@ void dragon_init(const uint8_t *rom_image)
 	kbd_q_head = kbd_q_tail = 0;
 	kbd_hold_cycles = kbd_release_cycles = 0;
 	frame_cycle = 0;
+	frame_line = 0;
 	total_cycles = 0;
 	audio_level = 0;
 	audio_count = 0;
@@ -2748,47 +2752,65 @@ void dragon_reset(void)
 #define FS_FALL_LINE	0
 #define FS_RISE_LINE	32
 
+
+// One CPU step with everything that hangs off it: sound, tape, keyboard,
+// and the VDG's line (HS) and frame (FS) sync pulses as time passes.
+// Returns true when a 50 Hz frame has ended.
+static bool one_step(void)
+{
+	if (frame_cycle == 0 && frame_line == 0)
+	{
+		pia_set_cx1(&pia0.crb, &pia0.cb1, false);	// FS falls: a frame begins
+	}
+	bool in_irq = (CC & CC_I) == 0 && pia_irq(&pia0);
+	float level = audio_level;
+	int cycles = cpu_step();
+	if (in_irq && (CC & CC_I))
+	{
+		irq_count++;
+	}
+	audio_run(cycles, level);
+	tape_run(cycles, (pia_out_a(&pia1) >> 2) & 63);
+	if (dragon_tape_motor())
+	{
+		audio_update_level();	// the tape can be heard through the mux
+	}
+	kbd_update_cycles(cycles);
+	frame_cycle += (unsigned)cycles;
+	total_cycles += (unsigned)cycles;
+
+	while (frame_cycle >= (frame_line + 1) * DRAGON_LINE_CYCLES && frame_line < DRAGON_FRAME_LINES)
+	{
+		frame_line++;
+		pia_set_cx1(&pia0.cra, &pia0.ca1, false);	// HS pulse
+		pia_set_cx1(&pia0.cra, &pia0.ca1, true);
+		if (frame_line == FS_RISE_LINE)
+		{
+			pia_set_cx1(&pia0.crb, &pia0.cb1, true);	// FS rises: 50 Hz IRQ
+		}
+	}
+	if (frame_cycle >= DRAGON_FRAME_CYCLES)
+	{
+		frame_cycle -= DRAGON_FRAME_CYCLES;	// carry the overshoot into the next frame
+		frame_line = 0;
+		pia_set_cx1(&pia0.crb, &pia0.cb1, false);	// FS falls
+		return true;
+	}
+	return false;
+}
+
 void dragon_run_frame(void)
 {
-	unsigned line = frame_cycle / DRAGON_LINE_CYCLES;
-	unsigned next_line = (line + 1) * DRAGON_LINE_CYCLES;
-	if (line == 0)
+	while (!one_step())
 	{
-		pia_set_cx1(&pia0.crb, &pia0.cb1, false);	// FS falls
 	}
+}
 
-	while (frame_cycle < DRAGON_FRAME_CYCLES)
-	{
-		bool in_irq = (CC & CC_I) == 0 && pia_irq(&pia0);
-		float level = audio_level;
-		int cycles = cpu_step();
-		if (in_irq && (CC & CC_I))
-		{
-			irq_count++;
-		}
-		audio_run(cycles, level);
-		tape_run(cycles, (pia_out_a(&pia1) >> 2) & 63);
-		if (dragon_tape_motor())
-		{
-			audio_update_level();	// the tape can be heard through the mux
-		}
-		kbd_update_cycles(cycles);
-		frame_cycle += (unsigned)cycles;
-		total_cycles += (unsigned)cycles;
-
-		while (frame_cycle >= next_line && line < DRAGON_FRAME_LINES)
-		{
-			line++;
-			next_line += DRAGON_LINE_CYCLES;
-			pia_set_cx1(&pia0.cra, &pia0.ca1, false);	// HS pulse
-			pia_set_cx1(&pia0.cra, &pia0.ca1, true);
-			if (line == FS_RISE_LINE)
-			{
-				pia_set_cx1(&pia0.crb, &pia0.cb1, true);	// FS rises: 50 Hz IRQ
-			}
-		}
-	}
-	frame_cycle -= DRAGON_FRAME_CYCLES;	// carry the overshoot into the next frame
+void dragon_step(bool trace)
+{
+	trace_on = trace;
+	one_step();
+	trace_on = false;
 }
 
 unsigned dragon_sam(void)
@@ -2849,6 +2871,11 @@ void dragon_set_matrix(const uint8_t matrix[8])
 void dragon_type(const char *text)
 {
 	kbd_enqueue_string(text);
+}
+
+void dragon_type_key(int row, int col, bool shift)
+{
+	kbd_enqueue_special(row, col, shift);
 }
 
 bool dragon_typing(void)
