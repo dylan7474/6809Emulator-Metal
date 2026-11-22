@@ -103,8 +103,9 @@ static const DragonTapeRecorder recorder = { NULL, rec_begin, rec_wavdata, rec_c
 int main(int argc, char **argv)
 {
 	int frames = 200, scale = 2, opt;
-	const char *text = NULL, *ppm = NULL, *wav = NULL, *tape = NULL, *after = NULL;
-	while ((opt = getopt(argc, argv, "f:t:p:s:w:i:o:a:")) != -1)
+	const char *text = NULL, *ppm = NULL, *wav = NULL, *tape = NULL, *after = NULL, *ramdump = NULL;
+	bool verbose = false;
+	while ((opt = getopt(argc, argv, "f:t:p:s:w:i:o:a:vr:")) != -1)
 	{
 		switch (opt)
 		{
@@ -116,6 +117,8 @@ int main(int argc, char **argv)
 		case 'i': tape = optarg; break;
 		case 'o': rec_prefix = optarg; break;
 		case 'a': after = optarg; break;
+		case 'v': verbose = true; break;		// screen + counter at each motor stop
+		case 'r': ramdump = optarg; break;		// 64 KB memory at each motor stop
 		default:
 			fprintf(stderr, "usage: %s [-f frames] [-t text] [-p out.ppm] [-s scale] rom\n", argv[0]);
 			return 2;
@@ -204,9 +207,31 @@ int main(int argc, char **argv)
 		{
 			dragon_type(text);	// type 0.2 s later, once it waits for keys
 		}
-		static bool motor_ran;
+		static bool motor_ran, motor_was;
 		static int motor_off_frames;
-		if (dragon_tape_motor())
+		bool motor = dragon_tape_motor();
+		if (motor_was && !motor)
+		{
+			if (verbose)
+			{
+				vdg_text(dragon_memory(), screen);
+				DragonRegs r;
+				dragon_regs(&r);
+				printf("motor off at frame %d, tape %u.%03u s, PC=%04X: [%.32s] [%.32s]\n", i,
+				       dragon_tape_pos_ms() / 1000, dragon_tape_pos_ms() % 1000, r.pc, screen, screen + 33);
+			}
+			if (ramdump)
+			{
+				FILE *d = fopen(ramdump, "wb");
+				if (d)
+				{
+					fwrite(dragon_memory(), 1, 65536, d);
+					fclose(d);
+				}
+			}
+		}
+		motor_was = motor;
+		if (motor)
 		{
 			motor_ran = true;
 			motor_off_frames = 0;
