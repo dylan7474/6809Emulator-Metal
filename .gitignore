@@ -1,0 +1,16 @@
+# Build output
+build/
+*.o
+*.d
+*.elf
+*.img
+*.map
+*.lst
+
+# Dragon ROMs: copyrighted, never commit
+*.rom
+*.ROM
+*.bin
+
+# Your own SD card extras (ROM)
+local/

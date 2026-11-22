@@ -1,0 +1,61 @@
+# 6809Emulator-Metal - one card for every Pi; the firmware picks the kernel.
+#   Pi Zero / Zero W / Pi 1   -> kernel.img        (32-bit, ARMv6)
+#   Pi 2                      -> kernel7.img       (32-bit, ARMv7)
+#   Pi Zero 2 W / Pi 3        -> kernel8.img       (64-bit)
+#   Pi 4 / 400                -> kernel8-rpi4.img  (64-bit, with Circle's armstub)
+#   Pi 5 / 500                -> kernel_2712.img   (64-bit)
+# Later sections win, so [pi02] overrides [pi0] on a Zero 2 W.
+
+[pi0]
+kernel=kernel.img
+
+[pi1]
+kernel=kernel.img
+
+[pi2]
+kernel=kernel7.img
+
+[pi02]
+arm_64bit=1
+kernel_address=0x80000
+kernel=kernel8.img
+
+[pi3]
+arm_64bit=1
+kernel_address=0x80000
+kernel=kernel8.img
+
+[pi4]
+arm_64bit=1
+kernel_address=0x80000
+armstub=armstub8-rpi4.bin
+kernel=kernel8-rpi4.img
+max_framebuffers=2
+
+[pi5]
+arm_64bit=1
+kernel_address=0x80000
+kernel=kernel_2712.img
+
+[all]
+initial_turbo=0
+
+# No rainbow square at power-on (documented legacy option, default 0)
+disable_splash=1
+
+# HDMI: the screen's own preferred mode is used, and the Dragon picture is
+# scaled by a whole number and centred (1080p gives 5x, 720p gives 3x).
+# To force 1024x768 (a 4x Dragon), uncomment these two lines;
+# not every screen accepts it.  The Pi 5 ignores them.
+#hdmi_group=2
+#hdmi_mode=16
+
+# Keep HDMI on even if the screen is switched on after the Pi
+hdmi_force_hotplug=1
+
+# Use the whole picture: without this the firmware leaves a black border
+# for TVs (a Zero W on a 1080p screen got 1824x984 in ClassicPi-Metal)
+disable_overscan=1
+
+# Do NOT set gpu_mem=16: it makes the firmware load start_cd.elf /
+# start4cd.elf, which are not on this card, and the Pi won't boot at all.
