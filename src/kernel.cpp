@@ -75,7 +75,7 @@ static void QueueKey (u8 Usage, bool bDown)
 // Everything said during startup, Circle's own log lines and the speed lines,
 // kept in RAM and written to SD:/bootlog-<board>.txt at each stage.
 
-#define BOOTLOG_SIZE	32768
+#define BOOTLOG_SIZE	65536
 
 static char s_BootLog[BOOTLOG_SIZE];
 static volatile unsigned s_nBootLog;
@@ -111,10 +111,11 @@ CKernel::CKernel (void)
 	m_bTurbo (false),
 	m_bKeyLog (false),
 	m_pSound (0),
-	m_bDebug (false),
 	m_bRawKeys (false),
+	m_bDebug (false),
 	m_nFlushOK (0),
 	m_nFlushFail (0),
+	m_nLastSaveMs (0),
 	m_nUSBLogFlushes (0),
 	m_bUSBRemoved (false),
 	m_pROM (0),
@@ -280,28 +281,47 @@ void CKernel::PanicHandler (void)
 	}
 }
 
+// The log file stays open: each save appends only what is new and syncs.
+// (Rewriting the whole file every time stalled a Zero W for 0.5-1 s per
+// save once the log had grown, which made the keyboard feel laggy.)
+static FIL s_LogFile;
+static bool s_bLogOpen;
+static unsigned s_nLogSaved;		// bytes of s_BootLog already in the file
+
 void CKernel::FlushBootLog (void)
 {
 	if (!m_bSDOK)
 	{
 		return;
 	}
-	FIL File;
-	if (f_open (&File, m_BootLogFile, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+	u64 nStart = CTimer::GetClockTicks64 ();
+	if (!s_bLogOpen)
 	{
-		m_nFlushFail++;
-		return;
+		if (f_open (&s_LogFile, m_BootLogFile, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+		{
+			m_nFlushFail++;
+			return;
+		}
+		s_bLogOpen = true;
+		s_nLogSaved = 0;
 	}
+	unsigned nEnd = s_nBootLog;
 	UINT nWritten = 0;
-	FRESULT Result = f_write (&File, s_BootLog, s_nBootLog, &nWritten);
-	if (f_close (&File) == FR_OK && Result == FR_OK && nWritten == s_nBootLog)
+	FRESULT Result = FR_OK;
+	if (nEnd > s_nLogSaved)
 	{
+		Result = f_write (&s_LogFile, s_BootLog + s_nLogSaved, nEnd - s_nLogSaved, &nWritten);
+	}
+	if (Result == FR_OK && nWritten == nEnd - s_nLogSaved && f_sync (&s_LogFile) == FR_OK)
+	{
+		s_nLogSaved = nEnd;
 		m_nFlushOK++;
 	}
 	else
 	{
 		m_nFlushFail++;
 	}
+	m_nLastSaveMs = (unsigned) ((CTimer::GetClockTicks64 () - nStart) / 1000);
 }
 
 void CKernel::LogBoard (void)
@@ -664,6 +684,14 @@ void CKernel::DrawStatus (const char *pText)
 	}
 	u32 White = nBytesPP == 2 ? 0xFFFF : COLOR32 (255, 255, 255, 255);
 	u32 Black = nBytesPP == 2 ? 0 : COLOR32 (0, 0, 0, 255);
+	static u8 Glyph[256][12];		// font rows of each character, looked up once
+	for (unsigned c = 0; c < nChars; c++)
+	{
+		for (unsigned r = 0; r < 12; r++)
+		{
+			Glyph[c][r] = vdg_font_row (pText[c], r);
+		}
+	}
 	for (unsigned y = 0; y < nRows; y++)
 	{
 		for (unsigned x = 0; x < nPixels; x++)
@@ -672,7 +700,7 @@ void CKernel::DrawStatus (const char *pText)
 			u32 Colour = Black;
 			if (nChar < nChars)
 			{
-				u8 Bits = vdg_font_row (pText[nChar], y / nScale);
+				u8 Bits = Glyph[nChar][y / nScale];
 				Colour = (Bits & (0x80 >> ((x / nScale) & 7))) ? White : Black;
 			}
 			if (nBytesPP == 2)
@@ -1012,10 +1040,10 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			unsigned nQueued = m_pSound != 0
 				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
 			snprintf (Text, sizeof Text,
-				  "UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u WAIT %u KBD %u SDOK %u SDFAIL %u SND %u",
+				  "UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u WAIT %u KBD %u SDOK %u SDFAIL %u SAVE %uMS SND %u",
 				  (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
 				  s_nFrame, dragon_irqs (), s_nKeyReports, s_nKeyDrops, keyfeed_waiting (), CountKeyboards (),
-				  m_nFlushOK, m_nFlushFail, nQueued);
+				  m_nFlushOK, m_nFlushFail, m_nLastSaveMs, nQueued);
 			DrawStatus (Text);
 			nNextStatus = nNow + 1000000;
 		}
@@ -1027,10 +1055,11 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			unsigned nQueued = m_pSound != 0
 				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
 			static const char *const Wait[] = { "", " SYNC", " CWAI" };
-			Log ("Debug:  %us ticks %u frame %u irqs %u PC=%04X CC=%02X S=%04X%s sound %u keyrpt %u drop %u sd %u/%u%s",
+			Log ("Debug:  %us ticks %u frame %u irqs %u PC=%04X CC=%02X S=%04X%s sound %u keyrpt %u drop %u sd %u/%u last save %u ms%s",
 			     (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
 			     s_nFrame, dragon_irqs (), Regs.pc, Regs.cc, Regs.s, Wait[Regs.wait], nQueued,
-			     s_nKeyReports, s_nKeyDrops, m_nFlushOK, m_nFlushFail, m_bTurbo ? " turbo" : "");
+			     s_nKeyReports, s_nKeyDrops, m_nFlushOK, m_nFlushFail, m_nLastSaveMs,
+			     m_bTurbo ? " turbo" : "");
 			FlushBootLog ();
 			nNextDebug = CTimer::GetClockTicks64 () + 5000000;
 		}

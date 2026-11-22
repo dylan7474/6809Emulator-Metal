@@ -81,6 +81,7 @@ private:
 	bool		m_bRawKeys;		// cmdline.txt keys=raw: no typing feeder
 	bool		m_bDebug;		// cmdline.txt debug=1: status line + log save every 5 s
 	unsigned	m_nFlushOK, m_nFlushFail;	// boot log saves to the SD card
+	unsigned	m_nLastSaveMs;			// how long the last save took
 
 	CUSBKeyboardDevice * volatile m_pKeyboards[MAX_KEYBOARDS];
 	unsigned	m_nUSBLogFlushes;
