@@ -471,8 +471,7 @@ void CKernel::CloseAdmin (void)
 	dragon_set_matrix (Matrix);
 	if (m_bScreenOK)
 	{
-		FillScreen (Pixel (0, 0, 0));
-		Blit (true);
+		Blit (true);		// the picture, and its border over the admin screen
 	}
 }
 

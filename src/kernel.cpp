@@ -144,7 +144,8 @@ CKernel::CKernel (void)
 	m_nUSBLogFlushes (0),
 	m_bUSBRemoved (false),
 	m_pROM (0),
-	m_pFB (0)
+	m_pFB (0),
+	m_nBorder (-1)
 {
 	s_pThis = this;
 	m_Message[0] = '\0';
@@ -784,6 +785,11 @@ void CKernel::Blit (bool bForce)
 		return;		// no screen: the Dragon runs blind (see the boot log)
 	}
 	vdg_render (dragon_memory (), s_Picture);
+	u8 Border = vdg_border (dragon_memory ());
+	if (bForce || Border != m_nBorder)
+	{
+		DrawBorder (Border);
+	}
 
 	const unsigned nBytesPP = m_nFBDepth / 8;
 	unsigned nRows = VDG_HEIGHT;
@@ -913,6 +919,57 @@ void CKernel::DrawStatus (const char *pText)
 			}
 		}
 		memcpy (m_pFB + (nTop + y) * m_nFBPitch, LineBuf, nPixels * nBytesPP);
+	}
+}
+
+// The margins around the Dragon's picture in its border colour (black
+// around text, green or buff around graphics), like the VDG's border on a
+// TV.  Drawn only when the colour changes.
+void CKernel::DrawBorder (u8 Colour)
+{
+	m_nBorder = Colour;
+	if (m_pFB == 0)
+	{
+		return;
+	}
+	const unsigned nBytesPP = m_nFBDepth / 8;
+	if (nBytesPP != 2 && nBytesPP != 4)
+	{
+		return;
+	}
+	static u32 LineBuf[4096] __attribute__((aligned(64)));
+	unsigned nWidth = m_nFBWidth & ~1u;
+	if (nWidth * nBytesPP > sizeof LineBuf)
+	{
+		return;
+	}
+	u32 Pixel = m_Palette[Colour];
+	for (unsigned x = 0; x < nWidth; x++)
+	{
+		if (nBytesPP == 2) ((u16 *) LineBuf)[x] = (u16) Pixel; else LineBuf[x] = Pixel;
+	}
+	unsigned nTop = m_nOffY, nBottom = m_nOffY + VDG_HEIGHT * m_nScale;
+	unsigned nLeft = m_nOffX, nRight = m_nOffX + VDG_WIDTH * m_nScale;
+	if (nBottom > m_nFBHeight) nBottom = m_nFBHeight;
+	if (nRight > nWidth) nRight = nWidth;
+	for (unsigned y = 0; y < m_nFBHeight; y++)
+	{
+		u8 *pLine = m_pFB + y * m_nFBPitch;
+		if (y < nTop || y >= nBottom)
+		{
+			memcpy (pLine, LineBuf, nWidth * nBytesPP);	// above / below the picture
+		}
+		else
+		{
+			if (nLeft > 0)
+			{
+				memcpy (pLine, LineBuf, nLeft * nBytesPP);
+			}
+			if (nRight < nWidth)
+			{
+				memcpy (pLine + nRight * nBytesPP, LineBuf, (nWidth - nRight) * nBytesPP);
+			}
+		}
 	}
 }
 

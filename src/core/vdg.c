@@ -19,8 +19,11 @@
  *
  * PIA1 port B ($FF22) bit 3 is the colour set (CSS): green text, or
  * orange text.  Bit 7 (A/G) switches to the graphics modes (bits 6-4 =
- * GM2-GM0, see gmode[] below).  The picture starts where the SAM's F0-F6
- * bits say (x 512 bytes).  Not yet: semigraphics-6/8/12/24.
+ * GM2-GM0, see gmode[] below).  The SAM decides which bytes each line
+ * shows (start = its F0-F6 bits x 512, rows from its V0-V2 bits); that
+ * is also how semigraphics-8/12/24 work.  Bit 4 (GM0) in text mode gives
+ * semigraphics-6.  Behaviour checked against XRoar's MC6847/MC6883
+ * models (colours, SG6, border).
  *
  * The font is drawn here to match the 6847's internal 5 x 7 characters
  * (placed at pixel columns 2-6, rows 3-9 of each cell).
@@ -143,59 +146,127 @@ static unsigned video_base(void)
 	return ((dragon_sam() >> 3) & 0x7F) * 512u;
 }
 
-// The eight graphics modes, by GM2-GM0 (PIA1 PB6-PB4) with A/G set:
-// bytes per row, bits per pixel, dots per pixel across, lines per row
-static const struct { uint8_t bytes, bpp, dot_w, row_h; } gmode[8] =
+// How the SAM walks memory for the VDG, by its V0-V2 bits: bytes per
+// memory row and scanlines each row is shown for (the MC6883 data sheet's
+// display modes: 1K, 1.5K, 2K, 3K or 6K).  The VDG decides how the bytes
+// are drawn.  Text with V = 2, 4 or 6 is how SG8, SG12 and SG24 work: the
+// VDG keeps counting its 12-line character rows while the SAM moves to a
+// new row of bytes every 3, 2 or 1 lines.
+static const struct { uint8_t bytes, lines; } sam_mode[8] =
 {
-	{ 16, 2, 4, 3 },	// 0 CG1  64 x 64,  4 colours
-	{ 16, 1, 2, 3 },	// 1 RG1 128 x 64,  2 colours
-	{ 32, 2, 2, 3 },	// 2 CG2 128 x 64,  4 colours
-	{ 16, 1, 2, 2 },	// 3 RG2 128 x 96,  2 colours  (PMODE 0)
-	{ 32, 2, 2, 2 },	// 4 CG3 128 x 96,  4 colours  (PMODE 1)
-	{ 16, 1, 2, 1 },	// 5 RG3 128 x 192, 2 colours  (PMODE 2)
-	{ 32, 2, 2, 1 },	// 6 CG6 128 x 192, 4 colours  (PMODE 3)
-	{ 32, 1, 1, 1 },	// 7 RG6 256 x 192, 2 colours  (PMODE 4)
+	{ 32, 12 },	// 0 text, SG4, SG6
+	{ 16, 3 },	// 1 CG1, RG1
+	{ 32, 3 },	// 2 CG2, SG8
+	{ 16, 2 },	// 3 RG2
+	{ 32, 2 },	// 4 CG3, SG12
+	{ 16, 1 },	// 5 RG3
+	{ 32, 1 },	// 6 CG6, RG6, SG24
+	{ 32, 1 },	// 7 (DMA)
 };
 
-static void render_graphics(const uint8_t *memory, unsigned mode, bool css,
-			    uint8_t picture[VDG_HEIGHT][VDG_WIDTH])
+// The eight graphics modes, by GM2-GM0 (PIA1 PB6-PB4) with A/G set:
+// bytes the VDG reads per line, bits per pixel, dots per pixel across
+static const struct { uint8_t bytes, bpp, dot_w; } gmode[8] =
 {
-	unsigned base = video_base();
-	unsigned bytes = gmode[mode].bytes, bpp = gmode[mode].bpp;
-	unsigned dot_w = gmode[mode].dot_w, row_h = gmode[mode].row_h;
-	// 4 colours: green yellow blue red, or (CSS) buff cyan magenta orange.
-	// 2 colours: black + green, or (CSS) black + buff.
-	uint8_t first = css ? VDG_BUFF : VDG_GREEN;
+	{ 16, 2, 4 },	// 0 CG1  64 x 64,  4 colours
+	{ 16, 1, 2 },	// 1 RG1 128 x 64,  2 colours
+	{ 32, 2, 2 },	// 2 CG2 128 x 64,  4 colours
+	{ 16, 1, 2 },	// 3 RG2 128 x 96,  2 colours  (PMODE 0)
+	{ 32, 2, 2 },	// 4 CG3 128 x 96,  4 colours  (PMODE 1)
+	{ 16, 1, 2 },	// 5 RG3 128 x 192, 2 colours  (PMODE 2)
+	{ 32, 2, 2 },	// 6 CG6 128 x 192, 4 colours  (PMODE 3)
+	{ 32, 1, 1 },	// 7 RG6 256 x 192, 2 colours  (PMODE 4)
+};
 
-	for (unsigned y = 0; y < VDG_HEIGHT; y++)
+uint8_t vdg_border(const uint8_t *memory)
+{
+	// Black around text; the colour set's first colour around graphics
+	uint8_t vdg_mode = memory[0xFF22];
+	if (!(vdg_mode & 0x80))
 	{
-		const uint8_t *row = memory + ((base + (y / row_h) * bytes) & 0xFFFF);
-		uint8_t *out = picture[y];
-		unsigned x = 0;
-		for (unsigned i = 0; i < bytes; i++)
+		return VDG_BLACK;
+	}
+	return (vdg_mode & 0x08) ? VDG_BUFF : VDG_GREEN;
+}
+
+static void render_graphics_line(const uint8_t *row, unsigned mode, bool css, uint8_t *out)
+{
+	unsigned bytes = gmode[mode].bytes, bpp = gmode[mode].bpp, dot_w = gmode[mode].dot_w;
+	// 4 colours: green yellow blue red, or (CSS) buff cyan magenta orange.
+	// 2 colours: green on dark green, or (CSS) buff on black.
+	uint8_t first = css ? VDG_BUFF : VDG_GREEN;
+	uint8_t off = css ? VDG_BLACK : VDG_DARK_GREEN;
+	unsigned x = 0;
+	for (unsigned i = 0; i < bytes; i++)
+	{
+		uint8_t v = row[i];
+		if (bpp == 2)
 		{
-			uint8_t v = row[i];
-			if (bpp == 2)
+			for (int sh = 6; sh >= 0; sh -= 2)
 			{
-				for (int sh = 6; sh >= 0; sh -= 2)
+				uint8_t c = (uint8_t)(first + ((v >> sh) & 3));
+				for (unsigned d = 0; d < dot_w; d++)
 				{
-					uint8_t c = (uint8_t)(first + ((v >> sh) & 3));
-					for (unsigned d = 0; d < dot_w; d++)
-					{
-						out[x++] = c;
-					}
+					out[x++] = c;
 				}
+			}
+		}
+		else
+		{
+			for (int sh = 7; sh >= 0; sh--)
+			{
+				uint8_t c = (v >> sh) & 1 ? first : off;
+				for (unsigned d = 0; d < dot_w; d++)
+				{
+					out[x++] = c;
+				}
+			}
+		}
+	}
+}
+
+// One scanline of text / semigraphics: r = the VDG's line within its
+// 12-line character row.  GM0 is the VDG's INT/EXT line on the Dragon:
+// with it set, bytes with bit 7 are semigraphics-6 and others are shown
+// as their own bit pattern (no external character ROM is fitted).
+static void render_text_line(const uint8_t *row, unsigned r, bool css, bool ext, uint8_t *out)
+{
+	uint8_t text_light = css ? VDG_ORANGE : VDG_GREEN;
+	uint8_t text_dark = css ? VDG_DARK_ORANGE : VDG_DARK_GREEN;
+	for (unsigned cx = 0; cx < 32; cx++, out += 8)
+	{
+		uint8_t v = row[cx];
+		if (v & 0x80)
+		{
+			unsigned bits;
+			uint8_t colour;
+			if (ext)
+			{
+				// Semigraphics-6: 2 x 3 blocks (bits 5-0, top left first);
+				// colour 2 or 3 of the colour set, by bit 6
+				bits = (v >> (r < 4 ? 4 : r < 8 ? 2 : 0)) & 3;
+				colour = (uint8_t)((css ? VDG_BUFF : VDG_GREEN) + ((v >> 6) & 3));
 			}
 			else
 			{
-				for (int sh = 7; sh >= 0; sh--)
-				{
-					uint8_t c = (v >> sh) & 1 ? first : VDG_BLACK;
-					for (unsigned d = 0; d < dot_w; d++)
-					{
-						out[x++] = c;
-					}
-				}
+				// Semigraphics-4: 2 x 2 blocks, colour in bits 6-4
+				bits = (r < 6 ? v >> 2 : v) & 3;
+				colour = (v >> 4) & 0x07;
+			}
+			uint8_t lc = (bits & 2) ? colour : VDG_BLACK;
+			uint8_t rc = (bits & 1) ? colour : VDG_BLACK;
+			out[0] = out[1] = out[2] = out[3] = lc;
+			out[4] = out[5] = out[6] = out[7] = rc;
+		}
+		else
+		{
+			bool inverse = (v & 0x40) == 0;
+			uint8_t ink = inverse ? text_light : text_dark;
+			uint8_t paper = inverse ? text_dark : text_light;
+			uint8_t bits = ext ? v : font[v & 0x3F][r];
+			for (int x = 0; x < 8; x++)
+			{
+				out[x] = (bits & (0x80 >> x)) ? ink : paper;
 			}
 		}
 	}
@@ -208,49 +279,30 @@ void vdg_render(const uint8_t *memory, uint8_t picture[VDG_HEIGHT][VDG_WIDTH])
 		build_font();
 	}
 	uint8_t vdg_mode = memory[0xFF22];		// PIA1 port B: A/G GM2 GM1 GM0 CSS
+	bool graphics = (vdg_mode & 0x80) != 0;
 	bool css = (vdg_mode & 0x08) != 0;
-	if (vdg_mode & 0x80)
-	{
-		render_graphics(memory, (vdg_mode >> 4) & 7, css, picture);
-		return;
-	}
+	bool gm0 = (vdg_mode & 0x10) != 0;
+	unsigned gm = (vdg_mode >> 4) & 7;
+	unsigned base = video_base();
+	unsigned v = dragon_sam() & 7;
+	unsigned row_bytes = sam_mode[v].bytes, row_lines = sam_mode[v].lines;
 
-	const uint8_t *vram = memory + video_base();
-	uint8_t text_light = css ? VDG_ORANGE : VDG_GREEN;
-	uint8_t text_dark = css ? VDG_DARK_ORANGE : VDG_DARK_GREEN;
-
-	for (int cy = 0; cy < 16; cy++)
+	for (unsigned y = 0; y < VDG_HEIGHT; y++)
 	{
-		for (int cx = 0; cx < 32; cx++)
+		// The bytes for this line, from the SAM (wrapping at 64K)
+		uint8_t row[32];
+		unsigned addr = base + (y / row_lines) * row_bytes;
+		for (unsigned i = 0; i < 32; i++)
 		{
-			uint8_t v = vram[(cy * 32 + cx) & 0xFFFF];
-			for (int y = 0; y < 12; y++)
-			{
-				uint8_t *out = &picture[cy * 12 + y][cx * 8];
-				if (v & 0x80)
-				{
-					// Semigraphics-4: 2 x 2 blocks of 4 x 6 pixels
-					uint8_t colour = (v >> 4) & 0x07;
-					int top = y < 6;
-					uint8_t left_on = top ? (v & 0x08) : (v & 0x02);
-					uint8_t right_on = top ? (v & 0x04) : (v & 0x01);
-					uint8_t l = left_on ? colour : VDG_BLACK;
-					uint8_t r = right_on ? colour : VDG_BLACK;
-					out[0] = out[1] = out[2] = out[3] = l;
-					out[4] = out[5] = out[6] = out[7] = r;
-				}
-				else
-				{
-					bool inverse = (v & 0x40) == 0;
-					uint8_t ink = inverse ? text_light : text_dark;
-					uint8_t paper = inverse ? text_dark : text_light;
-					uint8_t bits = font[v & 0x3F][y];
-					for (int x = 0; x < 8; x++)
-					{
-						out[x] = (bits & (0x80 >> x)) ? ink : paper;
-					}
-				}
-			}
+			row[i] = memory[(addr + i) & 0xFFFF];
+		}
+		if (graphics)
+		{
+			render_graphics_line(row, gm, css, picture[y]);
+		}
+		else
+		{
+			render_text_line(row, y % 12, css, gm0, picture[y]);
 		}
 	}
 }

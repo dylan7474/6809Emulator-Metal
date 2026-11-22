@@ -159,6 +159,10 @@ extern const uint8_t vdg_palette[VDG_COLOURS][3];
 // Text and semigraphics-4 from the 512 bytes at $0400.
 void vdg_render(const uint8_t *memory, uint8_t picture[VDG_HEIGHT][VDG_WIDTH]);
 
+// The border colour around the picture (black for text, the colour set's
+// first colour for graphics)
+uint8_t vdg_border(const uint8_t *memory);
+
 // One row (0-11) of the 6847's 8 x 12 cell for an ASCII character
 // (bit 7 = leftmost pixel); lower case shows as upper case.  For the
 // platform's own status text.

@@ -24,9 +24,12 @@ One SD card works in every Pi: the firmware picks the right kernel.
   set bit), the eight-colour semigraphics-4 blocks that BASIC's `CLS n`,
   `SET`/`RESET` and `CHR$(128-255)` use, and all eight graphics modes
   (64x64 to 256x192; BASIC's `PMODE 0`-`4`, `PCLS`, `LINE`, `CIRCLE`,
-  `PAINT`, `SCREEN`). The SAM chip's display start is followed, so
-  `PMODE`/`PCOPY` pages and games' own screens show. The picture is
-  scaled by a whole number and centred (5x on 1080p, 4x on 1024x768).
+  `PAINT`, `SCREEN`), semigraphics-6 (GM0 set in text mode) and
+  semigraphics-8/12/24 (the SAM's row modes with text), and the border:
+  black around text, green or buff around graphics. The SAM decides which
+  bytes each line shows, so `PMODE`/`PCOPY` pages and games' own screens
+  show. The picture is scaled by a whole number and centred (5x on 1080p,
+  4x on 1024x768).
 - Real speed: every 6809 instruction takes its datasheet cycle count
   (checked against XRoar's cycle-timed trace: all 2.6 million instructions
   of a BASIC run agree), and 17,784 cycles make one 50 Hz PAL frame. A
@@ -88,7 +91,7 @@ An existing name is never overwritten: the new one becomes `NAME-2`,
 
 ## Not yet
 
-Semigraphics-6/8/12/24, the border colour in graphics modes, fast tape loading,
+Fast tape loading,
 snapshots, DragonDOS disks, joysticks, the SAM's fast-CPU poke
 (`POKE 65495,0`) and cartridges.
 

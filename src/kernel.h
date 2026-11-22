@@ -91,6 +91,7 @@ private:
 	// Display
 	void SetupDisplay (void);
 	void Blit (bool bForce);
+	void DrawBorder (u8 Colour);		// palette index, around the picture
 	void DrawStatus (const char *pText);	// debug=1: text in the strip under the picture
 
 	// Input (the USB handler runs in interrupt context: it only queues)
@@ -157,6 +158,7 @@ private:
 	unsigned	m_nFBWidth, m_nFBHeight, m_nFBPitch, m_nFBDepth;
 	unsigned	m_nScale, m_nOffX, m_nOffY;
 	u32		m_Palette[16];		// palette index -> pixel value at this depth
+	int		m_nBorder;		// border colour drawn now (-1 = redraw)
 
 	static CKernel *s_pThis;
 };
