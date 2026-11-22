@@ -1,9 +1,12 @@
-# Circle USB hub: handle hub/port status changes instead of halting the Pi.
+# Circle USB hub: handle hub/port status changes instead of halting the Pi,
+# and re-plug a device whose port the hub disabled (it went silent).
 # A bus-powered hub dipping (power/over-current change) or a failed hub
-# request was LogPanic/assert in Circle 51.1.1 = the whole Pi stopped.
+# request was LogPanic/assert in Circle 51.1.1 = the whole Pi stopped; a
+# port disabled after an error left the device attached but dead.
+# Every port change is logged.
 
 --- a/lib/usb/usbstandardhub.cpp	2026-11-22 18:17:03.050292511 +0000
-+++ b/lib/usb/usbstandardhub.cpp	2026-11-22 18:17:03.069940982 +0000
++++ b/lib/usb/usbstandardhub.cpp	2026-11-22 18:27:38.791586798 +0000
 @@ -542,7 +542,37 @@
  
  	if (usStatusBitmap & 1)
@@ -43,7 +46,7 @@
  	}
  
  	for (unsigned nPort = 0; nPort < m_nPorts; nPort++)
-@@ -556,8 +586,10 @@
+@@ -556,17 +586,39 @@
  			REQUEST_IN | REQUEST_CLASS | REQUEST_TO_OTHER,
  			GET_STATUS, 0, nPort+1, m_pStatus[nPort], 4) != 4)
  		{
@@ -55,7 +58,14 @@
  		}
  
  		u16 usChangeStatus = m_pStatus[nPort]->wChangeStatus;
-@@ -565,8 +597,21 @@
++		u16 usPortStatus = m_pStatus[nPort]->wPortStatus;
++
++		// 6809Emulator-Metal: say what the hub reported (all of it was silent)
++		CLogger::Get ()->Write (FromHub, LogNotice,
++					"Port %u change 0x%04X, status 0x%04X%s", nPort+1,
++					(unsigned) usChangeStatus, (unsigned) usPortStatus,
++					m_pDevice[nPort] != 0 ? "" : " (no device)");
+ 
  		//CLogger::Get ()->Write (FromHub, LogDebug, "Change status is 0x%04X (port %u)",
  		//			(unsigned) usChangeStatus, nPort+1);
  
@@ -79,7 +89,7 @@
  
  		if (usChangeStatus & C_PORT_ENABLE__MASK)
  		{
-@@ -574,7 +619,7 @@
+@@ -574,10 +626,26 @@
  				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
  				CLEAR_FEATURE, C_PORT_ENABLE, nPort+1, 0, 0) < 0)
  			{
@@ -88,7 +98,26 @@
  							"Cannot clear C_PORT_ENABLE (port %u)",
  							nPort+1);
  			}
-@@ -586,7 +631,7 @@
++
++			// 6809Emulator-Metal: the hub disables a port after an error on
++			// its device.  Circle only cleared the flag, so the device stayed
++			// "attached" but silent (a Zero W keyboard went dead).  If it is
++			// still connected, re-plug it: remove it, then enumerate again.
++			if (   !(usPortStatus & PORT_ENABLE__MASK)
++			    && (usPortStatus & PORT_CONNECTION__MASK)
++			    && m_pDevice[nPort] != 0
++			    && !(usChangeStatus & C_PORT_CONNECTION__MASK))
++			{
++				CLogger::Get ()->Write (FromHub, LogWarning,
++							"Port %u was disabled by the hub: re-plugging its device",
++							nPort+1);
++				RemoveDeviceAt (nPort);
++				ReScanDevices ();
++			}
+ 		}
+ 
+ 		if (usChangeStatus & C_PORT_RESET__MASK)
+@@ -586,7 +654,7 @@
  				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
  				CLEAR_FEATURE, C_PORT_RESET, nPort+1, 0, 0) < 0)
  			{
@@ -97,7 +126,7 @@
  							"Cannot clear C_PORT_RESET (port %u)",
  							nPort+1);
  			}
-@@ -598,7 +643,7 @@
+@@ -598,7 +666,7 @@
  				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
  				CLEAR_FEATURE, C_PORT_CONNECTION, nPort+1, 0, 0) < 0)
  			{
