@@ -109,7 +109,13 @@ Next, roughly in order:
   stays the default.
 - **Clean copies of real tapes**: while a WAV recording loads, write a clean
   `.cas` of what was read (like XRoar's tape rewrite).
-- **A bigger card**: the image's FAT partition is 64 MB; WAV tapes fill it.
+- **A bigger card, updated in place**: the image's FAT partition is 64 MB
+  and WAV tapes fill it. Plan: a one-off `make-card` script that
+  partitions a real card at full size (or a chosen size), formats it FAT32
+  and copies the files in (seconds, not a 15 GB `dd`), and an
+  `update-card` script that only replaces the kernels, firmware and
+  `config.txt`, leaving `tapes/`, saves and logs alone. The small `.img`
+  stays for making a fresh card.
 - **Snapshots**: save and restore the whole machine from the admin screen.
 - **Printer to a file**: `PRINT#-2` / `LLIST` currently wait for a printer
   that isn't there; send them to `printer.txt` on the card.
