@@ -75,13 +75,15 @@ line has a `>` marker as well as a highlight):
 
 ## Tapes
 
-Put `.cas` or `.wav` tape files in a `tapes` folder on the SD card, choose
-one with F12, then type `CLOAD` (or `CLOADM`) as on a real Dragon. Tapes
+Put `.cas` or `.wav` tape files in a `tapes` folder on the SD card (in
+folders of your own if you like), choose one with F12, then type `CLOAD`
+(or `CLOADM`) as on a real Dragon. In the tape list, folders come first:
+Enter opens one, `../`, Backspace or Left goes back up. Tapes
 play in real time: the Dragon's motor relay starts and stops them, and
 `AUDIO ON` lets you hear them through the TV. `.wav` files can be 8 or
 16-bit, mono or stereo, any sample rate (recordings of real tapes work;
 the input copes with quiet and noisy recordings). `cmdline.txt`
-`tape=NAME.cas` inserts a tape at power-on.
+`tape=NAME.cas` (or `tape=FOLDER/NAME.cas`) inserts a tape at power-on.
 
 The card comes with two demo tapes: `CIRCLES` (`PMODE 4` lines and a
 circle) and `COLOURS` (`PMODE 3` with `PAINT`).

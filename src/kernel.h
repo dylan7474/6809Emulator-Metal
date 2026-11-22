@@ -59,6 +59,7 @@ private:
 	bool TapeInsert (const char *pName);
 	void TapeEject (void);
 	void ScanTapes (void);
+	void TapeFolder (const char *pName);	// into a folder, or up (0 / "..")
 	static unsigned TapeRead (void *pCtx, uint32_t nOffset, uint8_t *pBuf, unsigned nLen);
 	static void RecBegin (void *pCtx);
 	static void RecWav (void *pCtx, const uint8_t *pSamples, unsigned nCount);
@@ -129,7 +130,7 @@ private:
 	bool		m_bMuted;
 	char		m_Message[96];
 	u64		m_nMessageUntil;
-	char		m_TapeName[96];
+	char		m_TapeName[520];		// path under /tapes
 	FIL		m_TapeFile;
 	bool		m_bTapeOpen;
 	FIL		m_RecWav, m_RecCas;

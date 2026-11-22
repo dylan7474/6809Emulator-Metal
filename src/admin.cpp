@@ -28,10 +28,11 @@
 #define REC_CAS		"SD:/tapes/_recording.cas"
 
 #define MAX_FILES	200
-#define NAME_LEN	96
+#define NAME_LEN	256		// FatFs long names are up to 255 characters
 
 // USB HID usages used by the menus
 #define KEY_ENTER	0x28
+#define KEY_BACKSPACE	0x2A
 #define KEY_ESC		0x29
 #define KEY_RIGHT	0x4F
 #define KEY_LEFT	0x50
@@ -42,7 +43,9 @@
 
 static char s_Files[MAX_FILES][NAME_LEN];
 static u32 s_FileSize[MAX_FILES];
+static bool s_IsDir[MAX_FILES];
 static unsigned s_nFiles;
+static char s_Dir[256];			// folder being browsed, under /tapes ("" = top)
 static DragonTapeProgram s_Programs[64];
 static unsigned s_nPrograms;
 
@@ -73,8 +76,8 @@ static bool EndsWith (const char *p, const char *pExt)
 bool CKernel::TapeInsert (const char *pName)
 {
 	TapeEject ();
-	char Path[NAME_LEN + 16];
-	snprintf (Path, sizeof Path, TAPE_DIR "/%s", pName);
+	char Path[540];
+	snprintf (Path, sizeof Path, TAPE_DIR "/%s", pName);	// pName may include folders
 	if (f_open (&m_TapeFile, Path, FA_READ) != FR_OK)
 	{
 		Message ("CANNOT OPEN %s", pName);
@@ -107,41 +110,84 @@ void CKernel::TapeEject (void)
 	m_TapeName[0] = '\0';
 }
 
+// The folder s_Dir under /tapes: ".." (inside a folder), then folders,
+// then .cas/.wav files, each alphabetically
 void CKernel::ScanTapes (void)
 {
 	s_nFiles = 0;
+	if (s_Dir[0] != '\0')
+	{
+		strcpy (s_Files[0], "..");
+		s_IsDir[0] = true;
+		s_FileSize[0] = 0;
+		s_nFiles = 1;
+	}
+	char Path[300];
+	snprintf (Path, sizeof Path, TAPE_DIR "%s%s", s_Dir[0] ? "/" : "", s_Dir);
 	FATFS_DIR Dir;
 	FILINFO Info;
-	if (f_opendir (&Dir, TAPE_DIR) != FR_OK)
+	if (f_opendir (&Dir, Path) != FR_OK)
 	{
+		s_Dir[0] = '\0';		// a folder that has gone: back to the top
 		return;
 	}
+	unsigned nFirst = s_nFiles;
 	while (s_nFiles < MAX_FILES && f_readdir (&Dir, &Info) == FR_OK && Info.fname[0] != '\0')
 	{
-		if (   (Info.fattrib & AM_DIR) || Info.fname[0] == '_' || Info.fname[0] == '.'
-		    || !(EndsWith (Info.fname, ".cas") || EndsWith (Info.fname, ".wav")))
+		bool bDir = (Info.fattrib & AM_DIR) != 0;
+		if (   Info.fname[0] == '_' || Info.fname[0] == '.'
+		    || (!bDir && !(EndsWith (Info.fname, ".cas") || EndsWith (Info.fname, ".wav"))))
 		{
 			continue;
 		}
-		strncpy (s_Files[s_nFiles], Info.fname, NAME_LEN - 1);
-		s_Files[s_nFiles][NAME_LEN - 1] = '\0';
+		snprintf (s_Files[s_nFiles], NAME_LEN, "%s", Info.fname);
 		s_FileSize[s_nFiles] = (u32) Info.fsize;
+		s_IsDir[s_nFiles] = bDir;
 		s_nFiles++;
 	}
 	f_closedir (&Dir);
 
-	// alphabetical, ignoring case (simple insertion sort; a few dozen names)
-	for (unsigned i = 1; i < s_nFiles; i++)
+	// folders before files, then alphabetical ignoring case
+	for (unsigned i = nFirst + 1; i < s_nFiles; i++)
 	{
-		for (unsigned j = i; j > 0 && strcasecmp (s_Files[j - 1], s_Files[j]) > 0; j--)
+		for (unsigned j = i; j > nFirst; j--)
 		{
+			bool bSwap = s_IsDir[j] != s_IsDir[j - 1] ? s_IsDir[j]
+				     : strcasecmp (s_Files[j - 1], s_Files[j]) > 0;
+			if (!bSwap)
+			{
+				break;
+			}
 			char Tmp[NAME_LEN];
 			memcpy (Tmp, s_Files[j], NAME_LEN);
 			memcpy (s_Files[j], s_Files[j - 1], NAME_LEN);
 			memcpy (s_Files[j - 1], Tmp, NAME_LEN);
 			u32 t = s_FileSize[j]; s_FileSize[j] = s_FileSize[j - 1]; s_FileSize[j - 1] = t;
+			bool d = s_IsDir[j]; s_IsDir[j] = s_IsDir[j - 1]; s_IsDir[j - 1] = d;
 		}
 	}
+}
+
+// Into a folder (pName) or up one (".." / NULL)
+void CKernel::TapeFolder (const char *pName)
+{
+	if (pName == 0 || strcmp (pName, "..") == 0)
+	{
+		char *p = strrchr (s_Dir, '/');
+		if (p != 0) *p = '\0'; else s_Dir[0] = '\0';
+	}
+	else if (strlen (s_Dir) + strlen (pName) + 2 < sizeof s_Dir)
+	{
+		if (s_Dir[0] != '\0')
+		{
+			strcat (s_Dir, "/");
+		}
+		strcat (s_Dir, pName);
+	}
+	ScanTapes ();
+	m_nSel = 0;
+	m_nTop = 0;
+	m_bAdminClear = true;		// a different list: redraw from blank
 }
 
 // ---- Recording (CSAVE) ----------------------------------------------------------
@@ -557,11 +603,19 @@ void CKernel::DrawAdmin (void)
 	{
 		bool bFiles = m_nAdminScreen == AdminFiles;
 		unsigned nCount = bFiles ? s_nFiles : s_nPrograms;
-		AdminLine (nFirst - 1, bFiles ? "CHOOSE A TAPE FROM /TAPES (ENTER = INSERT):"
-					      : "PROGRAMS ON THIS TAPE (ENTER = WIND TO IT):", false, true);
+		if (bFiles)
+		{
+			snprintf (Text, sizeof Text, "/TAPES%s%.120s  (ENTER = INSERT OR OPEN):",
+				  s_Dir[0] ? "/" : "", s_Dir);
+			AdminLine (nFirst - 1, Text, false, true);
+		}
+		else
+		{
+			AdminLine (nFirst - 1, "PROGRAMS ON THIS TAPE (ENTER = WIND TO IT):", false, true);
+		}
 		if (nCount == 0)
 		{
-			AdminLine (nFirst + 1, bFiles ? "NO .CAS OR .WAV FILES IN /TAPES ON THE SD CARD"
+			AdminLine (nFirst + 1, bFiles ? "NO .CAS OR .WAV FILES OR FOLDERS HERE"
 						      : "NONE FOUND (ONLY .CAS TAPES ARE LISTED)", false, false);
 		}
 		if (m_nSel < m_nTop)
@@ -597,7 +651,18 @@ void CKernel::DrawAdmin (void)
 					Name[n++] = ' ';
 				}
 				Name[n] = '\0';
-				snprintf (Text, sizeof Text, "%s %6u KB", Name, (unsigned) ((s_FileSize[k] + 1023) / 1024));
+				if (s_IsDir[k])
+				{
+					// a folder: "NAME/" (".." = up)
+					char Folder[64];
+					snprintf (Folder, sizeof Folder, "%.42s/", s_Files[k]);
+					snprintf (Text, sizeof Text, "%-44s  FOLDER", strcmp (s_Files[k], "..") == 0
+						  ? "../ (UP A FOLDER)" : Folder);
+				}
+				else
+				{
+					snprintf (Text, sizeof Text, "%s %6u KB", Name, (unsigned) ((s_FileSize[k] + 1023) / 1024));
+				}
 			}
 			else
 			{
@@ -670,6 +735,13 @@ void CKernel::AdminKeyDo (u8 Usage)
 			m_nTop = 0;
 		}
 		return;
+	case KEY_BACKSPACE:
+	case KEY_LEFT:
+		if (m_nAdminScreen == AdminFiles && s_Dir[0] != '\0')
+		{
+			TapeFolder (0);		// up a folder
+		}
+		return;
 	case KEY_ENTER:
 		break;
 	default:
@@ -678,7 +750,20 @@ void CKernel::AdminKeyDo (u8 Usage)
 
 	if (m_nAdminScreen == AdminFiles)
 	{
-		if (m_nSel < s_nFiles && TapeInsert (s_Files[m_nSel]))
+		if (m_nSel >= s_nFiles)
+		{
+			return;
+		}
+		if (s_IsDir[m_nSel])
+		{
+			char Name[NAME_LEN];
+			strcpy (Name, s_Files[m_nSel]);
+			TapeFolder (Name);
+			return;
+		}
+		char Rel[520];
+		snprintf (Rel, sizeof Rel, "%.255s%s%.255s", s_Dir, s_Dir[0] ? "/" : "", s_Files[m_nSel]);
+		if (TapeInsert (Rel))
 		{
 			Message ("INSERTED %s: TYPE CLOAD (OR CLOADM) TO LOAD", s_Files[m_nSel]);
 			m_nAdminScreen = AdminMenu;
@@ -721,7 +806,9 @@ void CKernel::AdminKeyDo (u8 Usage)
 		m_nTop = 0;
 		for (unsigned i = 0; i < s_nFiles; i++)
 		{
-			if (strcmp (s_Files[i], m_TapeName) == 0)
+			char Rel[520];
+			snprintf (Rel, sizeof Rel, "%.255s%s%.255s", s_Dir, s_Dir[0] ? "/" : "", s_Files[i]);
+			if (!s_IsDir[i] && strcmp (Rel, m_TapeName) == 0)
 			{
 				m_nSel = i;		// start at the tape that's in
 			}
