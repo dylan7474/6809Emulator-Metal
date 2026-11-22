@@ -72,6 +72,86 @@ bool keymap_usb(uint8_t usage, bool pc_shift, int *row, int *col, bool *shift)
 	return false;
 }
 
+// ---- Typing feeder -------------------------------------------------------------
+
+#define KEYFEED_QUEUE	32
+
+typedef struct { uint8_t usage; bool shift; } FeedKey;
+
+static bool feed_held[256];			// physically down now
+static FeedKey feed_queue[KEYFEED_QUEUE];
+static unsigned feed_head, feed_count;
+static FeedKey feed_now;			// presented to the Dragon (usage 0 = none)
+static unsigned feed_since;			// frame it went down
+static unsigned feed_free_at;			// first frame the next key may go down
+
+void keyfeed_reset(void)
+{
+	memset(feed_held, 0, sizeof(feed_held));
+	feed_head = feed_count = 0;
+	feed_now.usage = 0;
+	feed_free_at = 0;
+}
+
+void keyfeed_event(uint8_t usage, bool down, unsigned frame)
+{
+	(void)frame;
+	feed_held[usage] = down;
+	if (!down || usage >= 0xE0)
+	{
+		return;				// releases and modifiers just update state
+	}
+	int row, col;
+	bool shift;
+	bool pc_shift = feed_held[USB_KEY_LSHIFT] || feed_held[USB_KEY_RSHIFT];
+	if (!keymap_usb(usage, pc_shift, &row, &col, &shift))
+	{
+		return;				// not a Dragon key
+	}
+	if (feed_count < KEYFEED_QUEUE)
+	{
+		FeedKey k = { usage, pc_shift };
+		feed_queue[(feed_head + feed_count) % KEYFEED_QUEUE] = k;
+		feed_count++;
+	}
+}
+
+void keyfeed_frame(unsigned frame, uint8_t matrix[8])
+{
+	// Let go of the presented key once it is up and has been down long enough
+	if (feed_now.usage != 0 && !feed_held[feed_now.usage]
+	    && frame - feed_since >= KEYFEED_HOLD)
+	{
+		feed_now.usage = 0;
+		feed_free_at = frame + KEYFEED_GAP;
+	}
+	// Next key, after a gap with nothing down
+	if (feed_now.usage == 0 && feed_count > 0 && (int)(frame - feed_free_at) >= 0)
+	{
+		feed_now = feed_queue[feed_head];
+		feed_head = (feed_head + 1) % KEYFEED_QUEUE;
+		feed_count--;
+		feed_since = frame;
+	}
+
+	memset(matrix, 0x7F, 8);
+	int row, col;
+	bool shift;
+	if (feed_now.usage != 0 && keymap_usb(feed_now.usage, feed_now.shift, &row, &col, &shift))
+	{
+		matrix[col] &= (uint8_t)~(1 << row);
+		if (shift)
+		{
+			matrix[DRAGON_KEY_SHIFT_COL] &= (uint8_t)~(1 << DRAGON_KEY_SHIFT_ROW);
+		}
+	}
+}
+
+unsigned keyfeed_waiting(void)
+{
+	return feed_count;
+}
+
 void keymap_matrix(const bool held[256], uint8_t matrix[8])
 {
 	bool pc_shift = held[USB_KEY_LSHIFT] || held[USB_KEY_RSHIFT];

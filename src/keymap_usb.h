@@ -27,6 +27,21 @@ extern "C" {
 // as pressed.
 void keymap_matrix(const bool held[256], uint8_t matrix[8]);
 
+// Typing feeder: the Dragon's ROM only sees a new key when no other key
+// is down, but PC typists press the next key before letting go of the
+// last (rollover), so keys were lost.  The feeder presents one key at a
+// time: held at least KEYFEED_HOLD frames, then KEYFEED_GAP frames with
+// nothing down before the next.  Keys pressed meanwhile wait in order; a
+// key still held stays down (so held arrows work).  Call keyfeed_event()
+// for every USB key change (modifiers too) and keyfeed_frame() once per
+// 50 Hz frame before running it.
+#define KEYFEED_HOLD	2
+#define KEYFEED_GAP	2
+void keyfeed_reset(void);
+void keyfeed_event(uint8_t usage, bool down, unsigned frame);
+void keyfeed_frame(unsigned frame, uint8_t matrix[8]);
+unsigned keyfeed_waiting(void);		// keys queued (for the status line)
+
 // One key: false if it is not a Dragon key.
 bool keymap_usb(uint8_t usage, bool pc_shift, int *row, int *col, bool *shift);
 

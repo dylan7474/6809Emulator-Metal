@@ -75,6 +75,10 @@ also copy `build/sdcard/` plus `d32.rom` onto any FAT32 card.
 - `scale=N` uses a smaller whole-number scale than the largest that fits.
 - `keylog=1` writes every USB key event (with its frame number) to the log.
 - `sound=off` turns HDMI sound off.
+- `keys=raw` puts every key you hold straight onto the Dragon's keyboard
+  matrix, for games that read two keys at once. By default keys are fed
+  one at a time: the Dragon's ROM only notices a new key when no other is
+  down, and PC typists press the next key before letting go of the last.
 - `debug=1` adds a status line every 5 s (frames, IRQs, the Dragon's PC,
   SYNC/CWAI, sound queue) and saves the log to the card each time, so a
   freeze shows when it happened. The saves can cause small hiccups.
@@ -98,6 +102,10 @@ stuck; if the LED stops too, the Pi itself has hung.
 
 `<board>` comes from the Pi's model name, for example `zero-2-w` or
 `zero-w`, so several boards can share one card.
+
+On the Pi Zero, 1, 2 and 3 Circle is built with `USE_USB_FIQ`, which
+moves the USB controller's 8000 interrupts a second to the FIQ, so HDMI
+sound can't delay them (without it a Zero W lost key presses).
 
 ## Building
 

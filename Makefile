@@ -47,6 +47,15 @@ pi5_PREFIX = aarch64-none-elf-
 pi5_ARCH   = aarch64-none-circle
 pi5_KERNEL = kernel_2712.img
 
+# Extra Circle options per target.  USE_USB_FIQ (Pi 1-3 only; the Pi 4/5
+# USB is different): the USB controller's 8000 interrupts a second go to
+# the FIQ, so other interrupts (HDMI sound) can't delay them.  Without it
+# a Zero W with HDMI sound lost key presses, saw stray USB "devices
+# changed" events and once lost USB altogether (2026-11-22).
+pi1_OPTIONS = -o USE_USB_FIQ
+pi2_OPTIONS = -o USE_USB_FIQ
+pi3_OPTIONS = -o USE_USB_FIQ
+
 STDLIB    = libs/circle-stdlib
 
 # Parts of circle-stdlib we never build (~310 MB of each copy):
@@ -58,7 +67,7 @@ STDLIB_UNUSED = --exclude=/libs/mongoose/ --exclude=/libs/mbedtls/ --exclude=/li
 RSYNC_SRC = rsync -a --delete --exclude=.git --exclude='*.o' --exclude='*.d' \
 		--exclude='*.elf' --exclude='*.img' --exclude='*.map' --exclude='*.lst'
 
-.PHONY: all sdcard clean distclean submodules qemu pc test $(TARGETS)
+.PHONY: all sdcard clean distclean submodules qemu pc test FORCE $(TARGETS)
 
 all: $(TARGETS)
 
@@ -68,14 +77,20 @@ submodules:
 # ---- per-target rules ------------------------------------------------------
 define TARGET_RULES
 
+# 0. The Circle options this target was built with: a change rebuilds its copy
+build/$(1)/circle-options: FORCE
+	@mkdir -p build/$(1)
+	@echo '$($(1)_OPTIONS)' | cmp -s - $$@ || echo '$($(1)_OPTIONS)' > $$@
+
 # 1. Our own copy of circle-stdlib, configured and built for this target (~2 min)
-build/$(1)/circle-stdlib/install/$($(1)_ARCH)/lib/libc.a: | submodules
+build/$(1)/circle-stdlib/install/$($(1)_ARCH)/lib/libc.a: build/$(1)/circle-options | submodules
+	rm -rf build/$(1)/circle-stdlib
 	mkdir -p build/$(1)
 	rsync -a --exclude=.git --exclude=/build/ --exclude=/install/ \
 		--exclude='*.o' --exclude='*.d' --exclude='*.a' --exclude=Config.mk \
 		--exclude=Config2.mk $(STDLIB_UNUSED) $(STDLIB)/ build/$(1)/circle-stdlib/
 	mkdir -p build/$(1)/circle-stdlib/build/circle-newlib build/$(1)/circle-stdlib/install
-	cd build/$(1)/circle-stdlib && ./configure -r $($(1)_RASPPI) -p $($(1)_PREFIX) && $$(MAKE)
+	cd build/$(1)/circle-stdlib && ./configure -r $($(1)_RASPPI) -p $($(1)_PREFIX) $($(1)_OPTIONS) && $$(MAKE)
 
 # 2. The kernel: a refreshed copy of src/, then Circle's Rules.mk
 $(1): build/$(1)/circle-stdlib/install/$($(1)_ARCH)/lib/libc.a

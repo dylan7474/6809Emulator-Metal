@@ -57,9 +57,6 @@ static volatile unsigned s_nKeyReports;		// USB keyboard reports received (debug
 static volatile unsigned s_nKeyDrops;		// key events lost: queue full (debug)
 static bool s_Held[256];			// main loop only
 static unsigned s_nFrame;			// frames run so far
-static unsigned s_DownFrame[256];		// frame each key went down
-
-#define MIN_HOLD_FRAMES	2			// 40 ms
 
 static void QueueKey (u8 Usage, bool bDown)
 {
@@ -115,6 +112,7 @@ CKernel::CKernel (void)
 	m_bKeyLog (false),
 	m_pSound (0),
 	m_bDebug (false),
+	m_bRawKeys (false),
 	m_nFlushOK (0),
 	m_nFlushFail (0),
 	m_nUSBLogFlushes (0),
@@ -314,6 +312,9 @@ void CKernel::LogBoard (void)
 	     pInfo->GetSoCName (), pInfo->GetRAMSize ());
 	Log ("Kernel: %u-bit, Circle RASPPI=%u, built " __DATE__ " " __TIME__,
 	     (unsigned) (sizeof (void *) * 8), (unsigned) RASPPI);
+#ifdef USE_USB_FIQ
+	Log ("USB:    FIQ on (USE_USB_FIQ)");
+#endif
 	Log ("SD card: %s", m_bSDOK ? "OK" : "FAILED");
 	if (m_bScreenOK)
 	{
@@ -865,20 +866,7 @@ void CKernel::DrainInput (void)
 	{
 		TKeyEvent Event = s_KeyQueue[s_nKeyOut];
 
-		// Every key is held for at least MIN_HOLD_FRAMES, or the ROM's
-		// keyboard scan can miss it: a release that comes too soon waits
-		// in the queue (and so do the keys after it, keeping their order).
-		// QEMU's virtual keyboard sends down + up within one frame.
-		if (   !Event.Down && s_Held[Event.Usage]
-		    && s_nFrame - s_DownFrame[Event.Usage] < MIN_HOLD_FRAMES)
-		{
-			break;
-		}
 		s_nKeyOut = (s_nKeyOut + 1) % (sizeof s_KeyQueue / sizeof s_KeyQueue[0]);
-		if (Event.Down)
-		{
-			s_DownFrame[Event.Usage] = s_nFrame;
-		}
 
 		if (Event.Down && Event.Usage == USB_KEY_F1)
 		{
@@ -895,13 +883,24 @@ void CKernel::DrainInput (void)
 			Log ("Key:    %02X %s (frame %u)", Event.Usage, Event.Down ? "down" : "up", s_nFrame);
 		}
 		s_Held[Event.Usage] = Event.Down;
+		keyfeed_event (Event.Usage, Event.Down, s_nFrame);
 		bChanged = true;
 	}
 
-	if (bChanged)
+	u8 Matrix[8];
+	if (m_bRawKeys)
 	{
-		u8 Matrix[8];
-		keymap_matrix (s_Held, Matrix);
+		// keys=raw: every key held goes straight to the matrix (games
+		// that read two keys at once; typing fast loses keys)
+		if (bChanged)
+		{
+			keymap_matrix (s_Held, Matrix);
+			dragon_set_matrix (Matrix);
+		}
+	}
+	else
+	{
+		keyfeed_frame (s_nFrame, Matrix);	// one key at a time (see keymap_usb.h)
 		dragon_set_matrix (Matrix);
 	}
 }
@@ -931,6 +930,10 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 	SetupDisplay ();
 	m_bKeyLog = mOptions.GetAppOptionDecimal ("keylog", 0) == 1;
 	m_bDebug = mOptions.GetAppOptionDecimal ("debug", 0) == 1;
+	m_bRawKeys = strcmp (mOptions.GetAppOptionString ("keys", "typing"), "raw") == 0;
+	keyfeed_reset ();
+	Log ("Keys:   %s", m_bRawKeys ? "raw (keys=raw: straight to the matrix)"
+				  : "typing (one key at a time; keys=raw for games)");
 	if (m_bDebug)
 	{
 		Log ("Debug:  debug=1 in cmdline.txt: status line + log saved every 5 s");
@@ -1009,9 +1012,9 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			unsigned nQueued = m_pSound != 0
 				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
 			snprintf (Text, sizeof Text,
-				  "UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u KBD %u SDOK %u SDFAIL %u SND %u",
+				  "UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u WAIT %u KBD %u SDOK %u SDFAIL %u SND %u",
 				  (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
-				  s_nFrame, dragon_irqs (), s_nKeyReports, s_nKeyDrops, CountKeyboards (),
+				  s_nFrame, dragon_irqs (), s_nKeyReports, s_nKeyDrops, keyfeed_waiting (), CountKeyboards (),
 				  m_nFlushOK, m_nFlushFail, nQueued);
 			DrawStatus (Text);
 			nNextStatus = nNow + 1000000;
