@@ -38,4 +38,15 @@ if [ "$(od -An -tu1 -j $((HDR + (100 * 512 + 100) * 3)) -N3 build/pc/cls3.ppm | 
 else
 	echo "FAIL: CLS 3 picture is not blue"; fail=1
 fi
+
+# PMODE 4 circle (needs CMPU, which the first version of the core got
+# wrong): pixels on the circle are lit, its centre is not
+$PC -f 3000 -s 1 -t '10 PMODE 4,1:PCLS:SCREEN 1,1\r20 CIRCLE(128,96),60\r30 GOTO 30\r\rRUN\r' -p build/pc/circle.ppm "$ROM" >/dev/null
+HDR=$(head -3 build/pc/circle.ppm | wc -c)
+px() { od -An -tu1 -j $((HDR + ($2 * 256 + $1) * 3)) -N1 build/pc/circle.ppm | tr -d ' '; }
+if [ "$(px 128 36)" -gt 100 ] && [ "$(px 68 96)" -gt 100 ] && [ "$(px 188 96)" -gt 100 ] && [ "$(px 128 96)" -lt 50 ]; then
+	echo "PASS: PMODE 4 circle drawn"
+else
+	echo "FAIL: PMODE 4 circle wrong (top $(px 128 36), left $(px 68 96), right $(px 188 96), centre $(px 128 96))"; fail=1
+fi
 exit $fail

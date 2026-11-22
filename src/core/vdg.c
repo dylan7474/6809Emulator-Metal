@@ -18,8 +18,9 @@
  *              1 bottom-left, 0 bottom-right); unlit quarters are black
  *
  * PIA1 port B ($FF22) bit 3 is the colour set (CSS): green text, or
- * orange text.  Graphics modes (PMODE) and the SAM's display offset are
- * not emulated yet: the picture is always the text screen at $0400.
+ * orange text.  Bit 7 (A/G) switches to the graphics modes (bits 6-4 =
+ * GM2-GM0, see gmode[] below).  The picture starts where the SAM's F0-F6
+ * bits say (x 512 bytes).  Not yet: semigraphics-6/8/12/24.
  *
  * The font is drawn here to match the 6847's internal 5 x 7 characters
  * (placed at pixel columns 2-6, rows 3-9 of each cell).
@@ -136,14 +137,85 @@ static void build_font(void)
 	font_ready = true;
 }
 
+// Where the picture starts: the SAM's F0-F6 bits x 512 ($0400 for BASIC)
+static unsigned video_base(void)
+{
+	return ((dragon_sam() >> 3) & 0x7F) * 512u;
+}
+
+// The eight graphics modes, by GM2-GM0 (PIA1 PB6-PB4) with A/G set:
+// bytes per row, bits per pixel, dots per pixel across, lines per row
+static const struct { uint8_t bytes, bpp, dot_w, row_h; } gmode[8] =
+{
+	{ 16, 2, 4, 3 },	// 0 CG1  64 x 64,  4 colours
+	{ 16, 1, 2, 3 },	// 1 RG1 128 x 64,  2 colours
+	{ 32, 2, 2, 3 },	// 2 CG2 128 x 64,  4 colours
+	{ 16, 1, 2, 2 },	// 3 RG2 128 x 96,  2 colours  (PMODE 0)
+	{ 32, 2, 2, 2 },	// 4 CG3 128 x 96,  4 colours  (PMODE 1)
+	{ 16, 1, 2, 1 },	// 5 RG3 128 x 192, 2 colours  (PMODE 2)
+	{ 32, 2, 2, 1 },	// 6 CG6 128 x 192, 4 colours  (PMODE 3)
+	{ 32, 1, 1, 1 },	// 7 RG6 256 x 192, 2 colours  (PMODE 4)
+};
+
+static void render_graphics(const uint8_t *memory, unsigned mode, bool css,
+			    uint8_t picture[VDG_HEIGHT][VDG_WIDTH])
+{
+	unsigned base = video_base();
+	unsigned bytes = gmode[mode].bytes, bpp = gmode[mode].bpp;
+	unsigned dot_w = gmode[mode].dot_w, row_h = gmode[mode].row_h;
+	// 4 colours: green yellow blue red, or (CSS) buff cyan magenta orange.
+	// 2 colours: black + green, or (CSS) black + buff.
+	uint8_t first = css ? VDG_BUFF : VDG_GREEN;
+
+	for (unsigned y = 0; y < VDG_HEIGHT; y++)
+	{
+		const uint8_t *row = memory + ((base + (y / row_h) * bytes) & 0xFFFF);
+		uint8_t *out = picture[y];
+		unsigned x = 0;
+		for (unsigned i = 0; i < bytes; i++)
+		{
+			uint8_t v = row[i];
+			if (bpp == 2)
+			{
+				for (int sh = 6; sh >= 0; sh -= 2)
+				{
+					uint8_t c = (uint8_t)(first + ((v >> sh) & 3));
+					for (unsigned d = 0; d < dot_w; d++)
+					{
+						out[x++] = c;
+					}
+				}
+			}
+			else
+			{
+				for (int sh = 7; sh >= 0; sh--)
+				{
+					uint8_t c = (v >> sh) & 1 ? first : VDG_BLACK;
+					for (unsigned d = 0; d < dot_w; d++)
+					{
+						out[x++] = c;
+					}
+				}
+			}
+		}
+	}
+}
+
 void vdg_render(const uint8_t *memory, uint8_t picture[VDG_HEIGHT][VDG_WIDTH])
 {
 	if (!font_ready)
 	{
 		build_font();
 	}
-	const uint8_t *vram = memory + 0x0400;
-	bool css = (memory[0xFF22] & 0x08) != 0;
+	uint8_t vdg_mode = memory[0xFF22];		// PIA1 port B: A/G GM2 GM1 GM0 CSS
+	bool css = (vdg_mode & 0x08) != 0;
+	if (vdg_mode & 0x80)
+	{
+		render_graphics(memory, (vdg_mode >> 4) & 7, css, picture);
+		return;
+	}
+
+	const uint8_t *vram = memory + video_base();
 	uint8_t text_light = css ? VDG_ORANGE : VDG_GREEN;
 	uint8_t text_dark = css ? VDG_DARK_ORANGE : VDG_DARK_GREEN;
 
@@ -151,7 +223,7 @@ void vdg_render(const uint8_t *memory, uint8_t picture[VDG_HEIGHT][VDG_WIDTH])
 	{
 		for (int cx = 0; cx < 32; cx++)
 		{
-			uint8_t v = vram[cy * 32 + cx];
+			uint8_t v = vram[(cy * 32 + cx) & 0xFFFF];
 			for (int y = 0; y < 12; y++)
 			{
 				uint8_t *out = &picture[cy * 12 + y][cx * 8];
@@ -208,7 +280,7 @@ void vdg_text(const uint8_t *memory, char *buf)
 	// Character codes 0-63 in the 6847's order, as ASCII
 	static const char ascii[] =
 		"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !\"#$%&'()*+,-./0123456789:;<=>?";
-	const uint8_t *vram = memory + 0x0400;
+	const uint8_t *vram = memory + video_base();
 	char *p = buf;
 	for (int row = 0; row < 16; row++)
 	{

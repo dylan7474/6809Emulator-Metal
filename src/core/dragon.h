@@ -43,6 +43,7 @@ void dragon_reset(void);
 void dragon_run_frame(void);
 
 uint64_t dragon_cycles(void);		// CPU cycles run since dragon_init
+unsigned dragon_sam(void);		// the SAM's 16 control bits (bit 3-9 = display start / 512)
 unsigned dragon_irqs(void);		// IRQs taken since dragon_init
 
 // ---- Sound -----------------------------------------------------------------

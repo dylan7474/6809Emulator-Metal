@@ -440,11 +440,31 @@ static inline uint16_t mem_read16(uint16_t addr)
 	return ((uint16_t)ram[addr] << 8) | ram[(uint16_t)(addr + 1)];
 }
 
+// ---- SAM (MC6883) ----
+// 16 control bits, each set by writing anywhere to an odd address and
+// cleared by an even one in $FFC0-$FFDF: V0-V2 (display mode), F0-F6
+// (display start, x 512 bytes), P1, R0-R1 (CPU rate), M0-M1 (memory size),
+// TY (map type).  The data written doesn't matter.
+static uint16_t sam_reg;
+
 static inline void mem_write(uint16_t addr, uint8_t val)
 {
 	if ((addr & 0xFFC0) == 0xFF00)
 	{
 		pia_write(addr, val);
+		return;
+	}
+	if (addr >= 0xFFC0 && addr <= 0xFFDF)
+	{
+		uint16_t bit = (uint16_t)(1u << ((addr - 0xFFC0) >> 1));
+		if (addr & 1)
+		{
+			sam_reg |= bit;
+		}
+		else
+		{
+			sam_reg &= (uint16_t)~bit;
+		}
 		return;
 	}
 	// Dragon 32 ROM Protection:
@@ -1523,21 +1543,76 @@ if (!quiet)
 						if (!quiet) printf("\tSWI3 [113F]");
 						executed = true;
 						break;
-					case 0x8C: // CMPU immediate
+					// Page 3 is SWI3 + CMPU/CMPS.  (The first version had CMPU at
+					// $8C and CMPS at $8E, and no $83: the ROM's CMPU #$03D9
+					// ran its operand as COM <$D9.  Found with an XRoar trace.)
+					case 0x83: // CMPU immediate
 					{
 						uint16_t val16 = ((uint16_t)ram[PC] << 8) | ram[PC+1];
 						PC += 2;
 						do_sub16(U, val16);
-						if (!quiet) printf("\tCMPU [118C]\t#$%04X", val16);
+						if (!quiet) printf("\tCMPU [1183]\t#$%04X", val16);
 						executed = true;
 						break;
 					}
-					case 0x8E: // CMPS immediate
+					case 0x8C: // CMPS immediate
 					{
 						uint16_t val16 = ((uint16_t)ram[PC] << 8) | ram[PC+1];
 						PC += 2;
 						do_sub16(S, val16);
-						if (!quiet) printf("\tCMPS [118E]\t#$%04X", val16);
+						if (!quiet) printf("\tCMPS [118C]\t#$%04X", val16);
+						executed = true;
+						break;
+					}
+					case 0x93: // CMPU direct
+					{
+						uint16_t addr = ((uint16_t)DP << 8) | ram[PC++];
+						do_sub16(U, mem_read16(addr));
+						if (!quiet) printf("\tCMPU [1193]\t<$%02X", addr & 0xFF);
+						executed = true;
+						break;
+					}
+					case 0x9C: // CMPS direct
+					{
+						uint16_t addr = ((uint16_t)DP << 8) | ram[PC++];
+						do_sub16(S, mem_read16(addr));
+						if (!quiet) printf("\tCMPS [119C]\t<$%02X", addr & 0xFF);
+						executed = true;
+						break;
+					}
+					case 0xA3: // CMPU indexed
+					{
+						char disasm[32];
+						uint16_t ea = decode_indexed(disasm, sizeof(disasm));
+						do_sub16(U, mem_read16(ea));
+						if (!quiet) printf("\tCMPU [11A3]\t%s", disasm);
+						executed = true;
+						break;
+					}
+					case 0xAC: // CMPS indexed
+					{
+						char disasm[32];
+						uint16_t ea = decode_indexed(disasm, sizeof(disasm));
+						do_sub16(S, mem_read16(ea));
+						if (!quiet) printf("\tCMPS [11AC]\t%s", disasm);
+						executed = true;
+						break;
+					}
+					case 0xB3: // CMPU extended
+					{
+						uint16_t addr = ((uint16_t)ram[PC] << 8) | ram[PC+1];
+						PC += 2;
+						do_sub16(U, mem_read16(addr));
+						if (!quiet) printf("\tCMPU [11B3]\t$%04X", addr);
+						executed = true;
+						break;
+					}
+					case 0xBC: // CMPS extended
+					{
+						uint16_t addr = ((uint16_t)ram[PC] << 8) | ram[PC+1];
+						PC += 2;
+						do_sub16(S, mem_read16(addr));
+						if (!quiet) printf("\tCMPS [11BC]\t$%04X", addr);
 						executed = true;
 						break;
 					}
@@ -2658,6 +2733,7 @@ void dragon_reset(void)
 	// The reset button resets the CPU and the PIAs (RAM is kept)
 	pia_reset(&pia0);
 	pia_reset(&pia1);
+	sam_reg = 0;
 	tape_set_motor(false);
 	cpu_sync = cpu_cwai = false;
 	CC = CC_I | CC_F;
@@ -2713,6 +2789,11 @@ void dragon_run_frame(void)
 		}
 	}
 	frame_cycle -= DRAGON_FRAME_CYCLES;	// carry the overshoot into the next frame
+}
+
+unsigned dragon_sam(void)
+{
+	return sam_reg;
 }
 
 uint64_t dragon_cycles(void)
