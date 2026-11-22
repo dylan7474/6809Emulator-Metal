@@ -58,6 +58,10 @@ pi3_OPTIONS = -o USE_USB_FIQ
 
 STDLIB    = libs/circle-stdlib
 
+# Changes to Circle, applied to each target's copy (the submodule stays
+# untouched).  See each patch's header.
+CIRCLE_PATCHES = patches/circle-usb-hub-no-panic.patch
+
 # Parts of circle-stdlib we never build (~310 MB of each copy):
 # networking, TLS, JSON, test framework and the LVGL graphics add-on.
 STDLIB_UNUSED = --exclude=/libs/mongoose/ --exclude=/libs/mbedtls/ --exclude=/libs/json/ \
@@ -80,7 +84,8 @@ define TARGET_RULES
 # 0. The Circle options this target was built with: a change rebuilds its copy
 build/$(1)/circle-options: FORCE
 	@mkdir -p build/$(1)
-	@echo '$($(1)_OPTIONS)' | cmp -s - $$@ || echo '$($(1)_OPTIONS)' > $$@
+	@echo '$($(1)_OPTIONS) $$(shell cat $(CIRCLE_PATCHES) | md5sum)' | cmp -s - $$@ \
+		|| echo '$($(1)_OPTIONS) $$(shell cat $(CIRCLE_PATCHES) | md5sum)' > $$@
 
 # 1. Our own copy of circle-stdlib, configured and built for this target (~2 min)
 build/$(1)/circle-stdlib/install/$($(1)_ARCH)/lib/libc.a: build/$(1)/circle-options | submodules
@@ -89,6 +94,8 @@ build/$(1)/circle-stdlib/install/$($(1)_ARCH)/lib/libc.a: build/$(1)/circle-opti
 	rsync -a --exclude=.git --exclude=/build/ --exclude=/install/ \
 		--exclude='*.o' --exclude='*.d' --exclude='*.a' --exclude=Config.mk \
 		--exclude=Config2.mk $(STDLIB_UNUSED) $(STDLIB)/ build/$(1)/circle-stdlib/
+	for p in $(CIRCLE_PATCHES); do \
+		patch -s -p1 -d build/$(1)/circle-stdlib/libs/circle < $$$$p || exit 1; done
 	mkdir -p build/$(1)/circle-stdlib/build/circle-newlib build/$(1)/circle-stdlib/install
 	cd build/$(1)/circle-stdlib && ./configure -r $($(1)_RASPPI) -p $($(1)_PREFIX) $($(1)_OPTIONS) && $$(MAKE)
 

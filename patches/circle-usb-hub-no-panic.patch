@@ -1,0 +1,108 @@
+# Circle USB hub: handle hub/port status changes instead of halting the Pi.
+# A bus-powered hub dipping (power/over-current change) or a failed hub
+# request was LogPanic/assert in Circle 51.1.1 = the whole Pi stopped.
+
+--- a/lib/usb/usbstandardhub.cpp	2026-11-22 18:17:03.050292511 +0000
++++ b/lib/usb/usbstandardhub.cpp	2026-11-22 18:17:03.069940982 +0000
+@@ -542,7 +542,37 @@
+ 
+ 	if (usStatusBitmap & 1)
+ 	{
+-		CLogger::Get ()->Write (FromHub, LogPanic, "Hub status change not handled");
++		// 6809Emulator-Metal: a hub-level change (local power or over-current,
++		// e.g. a bus-powered hub dipping) was a panic that halted the Pi.
++		// Read the hub status and acknowledge the change instead.
++		TUSBHubStatus *pHubStatus = new TUSBHubStatus;
++		if (   pHubStatus != 0
++		    && GetHost ()->ControlMessage (GetEndpoint0 (),
++				REQUEST_IN | REQUEST_CLASS | REQUEST_TO_DEVICE,
++				GET_STATUS, 0, 0, pHubStatus, 4) == 4)
++		{
++			CLogger::Get ()->Write (FromHub, LogWarning,
++						"Hub status change 0x%04X (status 0x%04X)",
++						(unsigned) pHubStatus->wHubChange,
++						(unsigned) pHubStatus->wHubStatus);
++			if (pHubStatus->wHubChange & C_HUB_LOCAL_POWER_LOST__MASK)
++			{
++				GetHost ()->ControlMessage (GetEndpoint0 (),
++					REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_DEVICE,
++					CLEAR_FEATURE, 0 /* C_HUB_LOCAL_POWER */, 0, 0, 0);
++			}
++			if (pHubStatus->wHubChange & C_HUB_OVER_CURRENT__MASK)
++			{
++				GetHost ()->ControlMessage (GetEndpoint0 (),
++					REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_DEVICE,
++					CLEAR_FEATURE, 1 /* C_HUB_OVER_CURRENT */, 0, 0, 0);
++			}
++		}
++		else
++		{
++			CLogger::Get ()->Write (FromHub, LogError, "Hub status change, cannot read hub status");
++		}
++		delete pHubStatus;
+ 	}
+ 
+ 	for (unsigned nPort = 0; nPort < m_nPorts; nPort++)
+@@ -556,8 +586,10 @@
+ 			REQUEST_IN | REQUEST_CLASS | REQUEST_TO_OTHER,
+ 			GET_STATUS, 0, nPort+1, m_pStatus[nPort], 4) != 4)
+ 		{
+-			CLogger::Get ()->Write (FromHub, LogPanic,
++			// 6809Emulator-Metal: was LogPanic (halted the Pi); skip this port
++			CLogger::Get ()->Write (FromHub, LogError,
+ 						"Cannot get port status (port %u)", nPort+1);
++			continue;
+ 		}
+ 
+ 		u16 usChangeStatus = m_pStatus[nPort]->wChangeStatus;
+@@ -565,8 +597,21 @@
+ 		//CLogger::Get ()->Write (FromHub, LogDebug, "Change status is 0x%04X (port %u)",
+ 		//			(unsigned) usChangeStatus, nPort+1);
+ 
+-		assert (!(usChangeStatus & C_PORT_SUSPEND__MASK));	// TODO
+-		assert (!(usChangeStatus & C_PORT_OVER_CURRENT__MASK));	// TODO
++		// 6809Emulator-Metal: these were asserts (a halt); acknowledge them
++		if (usChangeStatus & C_PORT_SUSPEND__MASK)
++		{
++			CLogger::Get ()->Write (FromHub, LogWarning, "Port %u suspend change", nPort+1);
++			GetHost ()->ControlMessage (GetEndpoint0 (),
++				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
++				CLEAR_FEATURE, C_PORT_SUSPEND, nPort+1, 0, 0);
++		}
++		if (usChangeStatus & C_PORT_OVER_CURRENT__MASK)
++		{
++			CLogger::Get ()->Write (FromHub, LogWarning, "Port %u over-current change", nPort+1);
++			GetHost ()->ControlMessage (GetEndpoint0 (),
++				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
++				CLEAR_FEATURE, C_PORT_OVER_CURRENT, nPort+1, 0, 0);
++		}
+ 
+ 		if (usChangeStatus & C_PORT_ENABLE__MASK)
+ 		{
+@@ -574,7 +619,7 @@
+ 				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
+ 				CLEAR_FEATURE, C_PORT_ENABLE, nPort+1, 0, 0) < 0)
+ 			{
+-				CLogger::Get ()->Write (FromHub, LogPanic,
++				CLogger::Get ()->Write (FromHub, LogError,	// was LogPanic
+ 							"Cannot clear C_PORT_ENABLE (port %u)",
+ 							nPort+1);
+ 			}
+@@ -586,7 +631,7 @@
+ 				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
+ 				CLEAR_FEATURE, C_PORT_RESET, nPort+1, 0, 0) < 0)
+ 			{
+-				CLogger::Get ()->Write (FromHub, LogPanic,
++				CLogger::Get ()->Write (FromHub, LogError,	// was LogPanic
+ 							"Cannot clear C_PORT_RESET (port %u)",
+ 							nPort+1);
+ 			}
+@@ -598,7 +643,7 @@
+ 				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
+ 				CLEAR_FEATURE, C_PORT_CONNECTION, nPort+1, 0, 0) < 0)
+ 			{
+-				CLogger::Get ()->Write (FromHub, LogPanic,
++				CLogger::Get ()->Write (FromHub, LogError,	// was LogPanic
+ 							"Cannot clear C_PORT_CONNECTION (port %u)",
+ 							nPort+1);
+ 			}
