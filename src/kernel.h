@@ -68,7 +68,7 @@ private:
 	void DrawTapeStrip (void);
 
 	// The admin screen (F12) and safe shutdown (admin.cpp)
-	enum TAdminScreen { AdminMenu, AdminFiles, AdminPrograms, AdminConfirm };
+	enum TAdminScreen { AdminMenu, AdminFiles, AdminPrograms, AdminConfirm, AdminConfirmHard };
 	void OpenAdmin (void);
 	void CloseAdmin (void);
 	void DrawAdmin (void);
@@ -77,6 +77,7 @@ private:
 	void AdminLine (unsigned nRow, const char *pText, bool bSelected, bool bTitle);
 	void Message (const char *pFormat, ...);
 	void ShutDown (void);
+	void HardReset (void);
 	void CloseBootLog (void);
 	u32 Pixel (unsigned r, unsigned g, unsigned b) const;
 	void DrawText (unsigned x, unsigned y, unsigned nScale, const char *pText,

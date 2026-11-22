@@ -47,7 +47,7 @@ static DragonTapeProgram s_Programs[64];
 static unsigned s_nPrograms;
 
 enum { ITEM_RESUME, ITEM_CHOOSE, ITEM_PLAY, ITEM_REWIND, ITEM_BACK, ITEM_FORWARD,
-       ITEM_PROGRAMS, ITEM_EJECT, ITEM_RESET, ITEM_SOUND, ITEM_TURBO, ITEM_SHUTDOWN,
+       ITEM_PROGRAMS, ITEM_EJECT, ITEM_RESET, ITEM_HARDRESET, ITEM_SOUND, ITEM_TURBO, ITEM_SHUTDOWN,
        ITEMS };
 
 // ---- Tape files ---------------------------------------------------------------
@@ -544,7 +544,8 @@ void CKernel::DrawAdmin (void)
 			case ITEM_FORWARD:	p = "TAPE: FORWARD 10 SECONDS"; break;
 			case ITEM_PROGRAMS:	p = "TAPE: JUMP TO A PROGRAM..."; break;
 			case ITEM_EJECT:	p = "TAPE: EJECT"; break;
-			case ITEM_RESET:	p = "RESET THE DRAGON (KEEPS THE PROGRAM)"; break;
+			case ITEM_RESET:	p = "RESET (THE RESET BUTTON: KEEPS THE PROGRAM)"; break;
+			case ITEM_HARDRESET:	p = "HARD RESET (POWER OFF AND ON: CLEARS MEMORY)"; break;
 			case ITEM_SOUND:	p = m_bMuted ? "SOUND: OFF (TURN ON)" : "SOUND: ON (TURN OFF)"; break;
 			case ITEM_TURBO:	p = m_bTurbo ? "TURBO: ON (TURN OFF)" : "TURBO: OFF (TURN ON)"; break;
 			case ITEM_SHUTDOWN:	p = "SHUT DOWN (SAFE TO SWITCH OFF)"; break;
@@ -608,6 +609,14 @@ void CKernel::DrawAdmin (void)
 			}
 			AdminLine (nFirst + i, Text, k == m_nSel, false);
 		}
+	}
+	else if (m_nAdminScreen == AdminConfirmHard)
+	{
+		AdminLine (nFirst, "HARD RESET NOW?", false, true);
+		AdminLine (nFirst + 2, "LIKE SWITCHING THE DRAGON OFF AND ON: MEMORY IS CLEARED", false, false);
+		AdminLine (nFirst + 3, "AND ANY PROGRAM IN IT IS LOST. THE TAPE STAYS IN, AND", false, false);
+		AdminLine (nFirst + 4, "A RECORDING IN PROGRESS IS FINISHED AND SAVED FIRST.", false, false);
+		AdminLine (nFirst + 6, "ENTER = HARD RESET      ESC = BACK", false, false);
 	}
 	else if (m_nAdminScreen == AdminConfirm)
 	{
@@ -693,6 +702,11 @@ void CKernel::AdminKeyDo (u8 Usage)
 		ShutDown ();		// does not return
 		return;
 	}
+	if (m_nAdminScreen == AdminConfirmHard)
+	{
+		HardReset ();
+		return;
+	}
 
 	u32 nPos = dragon_tape_pos_ms ();
 	switch (m_nSel)
@@ -750,10 +764,25 @@ void CKernel::AdminKeyDo (u8 Usage)
 	case ITEM_TURBO:
 		m_bTurbo = !m_bTurbo;
 		break;
+	case ITEM_HARDRESET:
+		m_nAdminScreen = AdminConfirmHard;
+		break;
 	case ITEM_SHUTDOWN:
 		m_nAdminScreen = AdminConfirm;
 		break;
 	}
+}
+
+// Like power off and on: the whole Dragon starts again from nothing
+// (RAM cleared, CPU, PIAs, SAM, VDG mode).  The cassette deck is outside
+// the Dragon, so the tape stays in; a recording is finished first.
+void CKernel::HardReset (void)
+{
+	dragon_tape_record_finish ();
+	dragon_init (m_pROM);
+	keyfeed_reset ();
+	Log ("Dragon: hard reset (admin): memory cleared");
+	CloseAdmin ();
 }
 
 // ---- Safe shutdown ----------------------------------------------------------------

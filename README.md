@@ -67,7 +67,9 @@ line has a `>` marker as well as a highlight):
   eject. The tape counter and length show at the top, and while a tape is
   in, the strip under the Dragon's picture shows its name, counter, PLAY
   or STOP and the motor.
-- Reset the Dragon (the program in memory is kept), sound on/off, turbo.
+- Reset (the Dragon's reset button: the program in memory is kept), hard
+  reset (like switching off and on: memory is cleared, the tape stays
+  in; asks first), sound on/off, turbo.
 - **Shut down:** finishes any recording, closes every file on the SD card
   and shows "It is now safe to switch off".
 
