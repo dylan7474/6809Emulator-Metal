@@ -75,6 +75,13 @@ also copy `build/sdcard/` plus `d32.rom` onto any FAT32 card.
 - `scale=N` uses a smaller whole-number scale than the largest that fits.
 - `keylog=1` writes every USB key event (with its frame number) to the log.
 - `sound=off` turns HDMI sound off.
+- `debug=1` adds a status line every 5 s (frames, IRQs, the Dragon's PC,
+  SYNC/CWAI, sound queue) and saves the log to the card each time, so a
+  freeze shows when it happened. The saves can cause small hiccups.
+
+While it runs, the green ACT LED blinks twice a second. If the picture
+freezes but the LED keeps blinking, the Pi is fine and the Dragon is
+stuck; if the LED stops too, the Pi itself has hung.
 
 ### Logs on the card
 

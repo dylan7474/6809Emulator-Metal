@@ -77,6 +77,7 @@ private:
 	bool		m_bTurbo;		// F2: run flat out
 	bool		m_bKeyLog;		// cmdline.txt keylog=1: log every USB key
 	void		*m_pSound;		// CHDMISoundBaseDevice, or 0 (no sound)
+	bool		m_bDebug;		// cmdline.txt debug=1: status line + log save every 5 s
 
 	CUSBKeyboardDevice * volatile m_pKeyboards[MAX_KEYBOARDS];
 	unsigned	m_nUSBLogFlushes;

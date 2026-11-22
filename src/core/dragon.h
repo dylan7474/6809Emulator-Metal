@@ -57,6 +57,7 @@ typedef struct
 {
 	uint16_t pc, x, y, u, s;
 	uint8_t a, b, dp, cc;
+	uint8_t wait;		// 0 = running, 1 = in SYNC, 2 = in CWAI
 } DragonRegs;
 void dragon_regs(DragonRegs *regs);
 

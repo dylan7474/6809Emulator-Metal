@@ -111,6 +111,7 @@ CKernel::CKernel (void)
 	m_bTurbo (false),
 	m_bKeyLog (false),
 	m_pSound (0),
+	m_bDebug (false),
 	m_nUSBLogFlushes (0),
 	m_bUSBRemoved (false),
 	m_pROM (0),
@@ -694,7 +695,7 @@ void CKernel::UpdateUSB (void)
 		}
 	}
 
-	Log ("USB:    devices changed; now %u keyboard(s)", CountKeyboards ());
+	Log ("USB:    devices changed (frame %u); now %u keyboard(s)", s_nFrame, CountKeyboards ());
 	if (m_nUSBLogFlushes < USB_LOG_FLUSHES)
 	{
 		m_nUSBLogFlushes++;
@@ -865,6 +866,11 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 
 	SetupDisplay ();
 	m_bKeyLog = mOptions.GetAppOptionDecimal ("keylog", 0) == 1;
+	m_bDebug = mOptions.GetAppOptionDecimal ("debug", 0) == 1;
+	if (m_bDebug)
+	{
+		Log ("Debug:  debug=1 in cmdline.txt: status line + log saved every 5 s");
+	}
 	if (m_bKeyLog)
 	{
 		Log ("Keys:   keylog=1 in cmdline.txt: every USB key goes in the log");
@@ -886,6 +892,10 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 	u64 nNextFrame = nNow + FRAME_US;
 	u64 nNextUSB = nNow + 100000;
 	u64 nNextDraw = nNow;
+	u64 nNextBeat = nNow;			// ACT LED heartbeat
+	bool bLED = false;
+	u64 nNextDebug = nNow + 5000000;
+	u64 nLoopStart = nNow;
 
 	// Speed: CPU time spent inside dragon_run_frame()
 	u64 nStatsStart = nNow;
@@ -917,6 +927,30 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 		{
 			UpdateUSB ();
 			nNextUSB = nNow + 100000;
+		}
+
+		// Heartbeat: the ACT LED blinks twice a second while this loop runs.
+		// Frozen picture + blinking LED = the Dragon is stuck, not the Pi.
+		if (nNow >= nNextBeat)
+		{
+			bLED = !bLED;
+			if (bLED) mActLED.On (); else mActLED.Off ();
+			nNextBeat = nNow + 250000;
+		}
+
+		if (m_bDebug && nNow >= nNextDebug)
+		{
+			DragonRegs Regs;
+			dragon_regs (&Regs);
+			unsigned nQueued = m_pSound != 0
+				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
+			static const char *const Wait[] = { "", " SYNC", " CWAI" };
+			Log ("Debug:  %us frame %u irqs %u PC=%04X CC=%02X S=%04X%s sound %u%s",
+			     (unsigned) ((nNow - nLoopStart) / 1000000), s_nFrame, dragon_irqs (),
+			     Regs.pc, Regs.cc, Regs.s, Wait[Regs.wait], nQueued,
+			     m_bTurbo ? " turbo" : "");
+			FlushBootLog ();
+			nNextDebug = CTimer::GetClockTicks64 () + 5000000;
 		}
 
 		if (!bLoggedFirstSecond && nNow - nStatsStart >= 1000000)

@@ -2740,6 +2740,7 @@ void dragon_regs(DragonRegs *regs)
 {
 	regs->pc = PC; regs->x = X; regs->y = Y; regs->u = U; regs->s = S;
 	regs->a = A; regs->b = B; regs->dp = DP; regs->cc = CC;
+	regs->wait = cpu_sync ? 1 : (cpu_cwai ? 2 : 0);
 }
 
 void dragon_set_matrix(const uint8_t matrix[8])
