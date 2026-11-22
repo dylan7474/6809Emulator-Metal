@@ -70,11 +70,28 @@ tools/make-sdimage.sh          # -> build/6809Emulator-Metal.img (64 MB)
 Flash the image with Raspberry Pi Imager ("Use custom") or `dd`. You can
 also copy `build/sdcard/` plus `d32.rom` onto any FAT32 card.
 
+### Wi-Fi and the clock
+
+The Dragon has no clock (`TIMER` only counts 50ths of a second since
+power-on), but the files the Pi writes to the card (saved tapes, logs) are
+dated from the Pi's clock. Put a `wpa_supplicant.conf` on the card (copy
+`wpa_supplicant.conf.example` and fill in your network) and the Pi joins
+Wi-Fi at power-on and sets its clock from internet time (NTP) a few seconds
+later; the time is UK time with summer time unless `tz=` says otherwise.
+The network only gets the idle part of each frame, so the Dragon's speed
+never changes. Without the file, files are dated 1 January 1980.
+
+`tools/make-sdimage.sh` adds `local/wpa_supplicant.conf` when it exists;
+the image then holds your Wi-Fi password, so keep it private.
+
 ### cmdline.txt options
 
 - `scale=N` uses a smaller whole-number scale than the largest that fits.
 - `keylog=1` writes every USB key event (with its frame number) to the log.
 - `sound=off` turns HDMI sound off.
+- `wifi=off` never starts Wi-Fi; `ntp=server` picks the time server
+  (default `pool.ntp.org`); `tz=` a POSIX time zone (default
+  `GMT0BST,M3.5.0/1,M10.5.0`, the UK).
 - `keys=raw` puts every key you hold straight onto the Dragon's keyboard
   matrix, for games that read two keys at once. By default keys are fed
   one at a time: the Dragon's ROM only notices a new key when no other is

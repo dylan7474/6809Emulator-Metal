@@ -14,6 +14,8 @@ include $(CIRCLEHOME)/Rules.mk
 INCLUDE := -I. $(CIRCLE_STDLIB_INCLUDES) $(INCLUDE)
 OPTIMIZE = -O3
 
-LIBS := $(CIRCLEHOME)/lib/sound/libsound.a $(CIRCLE_STDLIB_LIBS)
+# Wi-Fi (internet time): Circle's WLAN driver + WPA supplicant
+LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
+	$(CIRCLEHOME)/addon/wlan/libwlan.a $(CIRCLEHOME)/lib/sound/libsound.a $(CIRCLE_STDLIB_LIBS)
 
 -include $(DEPS)

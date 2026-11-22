@@ -142,15 +142,48 @@ build/firmware/%:
 	curl -fsSL --retry 3 --retry-all-errors -o $@.part $(FIRMWARE_URL)/$*
 	mv $@.part $@
 
-sdcard: all $(addprefix build/firmware/,$(FIRMWARE))
+# Wi-Fi chip firmware (Zero W, Zero 2 W, Pi 3, Pi 4/400, Pi 5): the files and
+# revision Circle's addon/wlan/firmware/Makefile names; on the card in firmware/.
+WLAN_FW_REV = c9d3ae6584ab79d19a4f94ccf701e888f9f87a53
+WLAN_FW_URL = https://github.com/RPi-Distro/firmware-nonfree/raw/$(WLAN_FW_REV)/debian/config/brcm80211
+# card name:source path
+WLAN_FW = brcmfmac43430-sdio.bin:cypress/cyfmac43430-sdio.bin \
+	  brcmfmac43430-sdio.txt:brcm/brcmfmac43430-sdio.txt \
+	  brcmfmac43430-sdio.clm_blob:cypress/cyfmac43430-sdio.clm_blob \
+	  brcmfmac43436-sdio.bin:brcm/brcmfmac43436-sdio.bin \
+	  brcmfmac43436-sdio.txt:brcm/brcmfmac43436-sdio.txt \
+	  brcmfmac43436-sdio.clm_blob:brcm/brcmfmac43436-sdio.clm_blob \
+	  brcmfmac43436s-sdio.bin:brcm/brcmfmac43436s-sdio.bin \
+	  brcmfmac43436s-sdio.txt:brcm/brcmfmac43436s-sdio.txt \
+	  brcmfmac43455-sdio.bin:cypress/cyfmac43455-sdio-minimal.bin \
+	  brcmfmac43455-sdio.txt:brcm/brcmfmac43455-sdio.txt \
+	  brcmfmac43455-sdio.clm_blob:cypress/cyfmac43455-sdio.clm_blob \
+	  brcmfmac43456-sdio.bin:brcm/brcmfmac43456-sdio.bin \
+	  brcmfmac43456-sdio.txt:brcm/brcmfmac43456-sdio.txt \
+	  brcmfmac43456-sdio.clm_blob:brcm/brcmfmac43456-sdio.clm_blob \
+	  brcmfmac43455-sdio.raspberrypi,5-model-b.bin:cypress/cyfmac43455-sdio-minimal.bin \
+	  brcmfmac43455-sdio.raspberrypi,5-model-b.txt:brcm/brcmfmac43455-sdio.txt \
+	  brcmfmac43455-sdio.raspberrypi,5-model-b.clm_blob:cypress/cyfmac43455-sdio.clm_blob
+WLAN_FW_FILES = $(addprefix build/wlan-firmware/,$(foreach f,$(WLAN_FW),$(firstword $(subst :, ,$(f)))))
+
+build/wlan-firmware/%:
+	mkdir -p build/wlan-firmware
+	curl -fsSL --retry 3 --retry-all-errors -o "$@.part" \
+		"$(WLAN_FW_URL)/$(word 2,$(subst :, ,$(filter $*:%,$(WLAN_FW))))"
+	mv "$@.part" "$@"
+
+sdcard: all $(addprefix build/firmware/,$(FIRMWARE)) $(WLAN_FW_FILES)
 	rm -rf build/sdcard
 	mkdir -p build/sdcard/overlays
 	cd build/firmware && cp --parents $(FIRMWARE) ../sdcard/
-	cp sdcard/config.txt sdcard/cmdline.txt build/sdcard/
+	mkdir -p build/sdcard/firmware
+	cp build/wlan-firmware/* build/sdcard/firmware/
+	cp sdcard/config.txt sdcard/cmdline.txt sdcard/wpa_supplicant.conf.example build/sdcard/
 	cp $(foreach t,$(TARGETS),build/$($(t)_KERNEL)) build/sdcard/
 	$(if $(filter pi4,$(TARGETS)),cp build/armstub8-rpi4.bin build/sdcard/)
 	@echo
-	@echo "build/sdcard/ is ready: copy it to a FAT32 card, then add d32.rom."
+	@echo "build/sdcard/ is ready: copy it to a FAT32 card, then add d32.rom"
+	@echo "(and wpa_supplicant.conf for Wi-Fi time: see wpa_supplicant.conf.example)."
 
 # ---- housekeeping -------------------------------------------------------------
 clean:
@@ -158,7 +191,7 @@ clean:
 		build/$($(t)_KERNEL)) build/armstub8-rpi4.bin
 
 distclean: clean
-	rm -rf $(foreach t,$(TARGETS),build/$(t)) build/firmware
+	rm -rf $(foreach t,$(TARGETS),build/$(t)) build/firmware build/wlan-firmware
 
 # Try it in QEMU's Raspberry Pi 3 model (make the card first with tools/qemu-sd.sh).
 # Serial output (the log) goes to the terminal.

@@ -20,6 +20,14 @@
 #include <circle/timer.h>
 #include <circle/util.h>
 #include <circle/sound/soundbasedevice.h>
+#include <circle/net/dnsclient.h>
+#include <circle/net/ntpclient.h>
+#include <circle/net/ipaddress.h>
+#include <circle/netdevice.h>
+#include <circle/sched/task.h>
+#include <circle/string.h>
+#include <stdlib.h>
+#include <time.h>
 #if RASPPI <= 4
 #include <circle/sound/hdmisoundbasedevice.h>
 #endif
@@ -111,6 +119,12 @@ CKernel::CKernel (void)
 	m_bTurbo (false),
 	m_bKeyLog (false),
 	m_pSound (0),
+	m_pWLAN (0),
+	m_pNet (0),
+	m_pWPASupplicant (0),
+	m_bNetActive (false),
+	m_bTimeDone (false),
+	m_nNetStart (0),
 	m_bRawKeys (false),
 	m_bDebug (false),
 	m_nFlushOK (0),
@@ -454,6 +468,166 @@ void CKernel::WriteSpeedFile (unsigned nFrameUs)
 	f_write (&File, Text, n, &nWritten);
 	f_close (&File);
 	Log ("wrote %s", m_SpeedFile);
+}
+
+// ---- Wi-Fi + internet time ------------------------------------------------------
+// The Dragon has no clock, but the files written to the SD card (tapes,
+// logs) get their dates from the Pi's clock.  With SD:/wpa_supplicant.conf
+// the Pi joins Wi-Fi and asks an NTP server once; the network only gets
+// turns in the idle part of each 20 ms frame, so the Dragon never slows.
+// From ClassicPi-Metal, where it runs on real Zero W / Zero 2 W boards.
+
+#define WIFI_CONFIG	"SD:/wpa_supplicant.conf"
+#define WIFI_FIRMWARE	"SD:/firmware/"
+#define HOSTNAME	"dragon"
+#define NET_GIVE_UP_US	120000000	// stop the network after 2 min without time
+
+static volatile unsigned s_nNTPTime;		// Unix seconds, 0 = not yet
+static volatile bool s_bNTPDone;		// task finished (with or without time)
+
+class CTimeTask : public CTask
+{
+public:
+	CTimeTask (CNetSubSystem *pNet, const char *pServer)
+	:	m_pNet (pNet), m_pServer (pServer)
+	{
+		SetName ("ntp");
+	}
+
+	void Run (void) override
+	{
+		CScheduler *pSched = CScheduler::Get ();
+		while (!m_pNet->IsRunning ())		// Wi-Fi joined + DHCP
+		{
+			pSched->MsSleep (200);
+		}
+		CString IP;
+		m_pNet->GetConfig ()->GetIPAddress ()->Format (&IP);
+		CLogger::Get ()->Write ("dragon", LogNotice, "Network: connected, IP address %s",
+					(const char *) IP);
+
+		for (unsigned nTry = 0; nTry < 5 && s_nNTPTime == 0; nTry++)
+		{
+			CIPAddress Server;
+			CDNSClient DNS (m_pNet);
+			if (DNS.Resolve (m_pServer, &Server))
+			{
+				CNTPClient NTP (m_pNet);
+				s_nNTPTime = NTP.GetTime (Server);
+			}
+			if (s_nNTPTime == 0)
+			{
+				pSched->MsSleep (2000);
+			}
+		}
+		s_bNTPDone = true;
+	}
+
+private:
+	CNetSubSystem *m_pNet;
+	const char *m_pServer;
+};
+
+void CKernel::StartWiFi (void)
+{
+	strncpy (m_TimeZone, mOptions.GetAppOptionString ("tz", "GMT0BST,M3.5.0/1,M10.5.0"),
+		 sizeof m_TimeZone - 1);
+	strncpy (m_NTPServer, mOptions.GetAppOptionString ("ntp", "pool.ntp.org"),
+		 sizeof m_NTPServer - 1);
+	m_TimeZone[sizeof m_TimeZone - 1] = '\0';
+	m_NTPServer[sizeof m_NTPServer - 1] = '\0';
+	setenv ("TZ", m_TimeZone, 1);
+	tzset ();
+
+	if (strcmp (mOptions.GetAppOptionString ("wifi", "on"), "off") == 0)
+	{
+		Log ("Network: off (wifi=off in cmdline.txt)");
+		return;
+	}
+	FILINFO Info;
+	if (f_stat (WIFI_CONFIG, &Info) != FR_OK)
+	{
+		Log ("Network: off (no wpa_supplicant.conf; files are dated 1980)");
+		return;
+	}
+	m_pWLAN = new CBcm4343Device (WIFI_FIRMWARE);
+	if (m_pWLAN == 0 || !m_pWLAN->Initialize ())
+	{
+		Log ("Wi-Fi:  no Wi-Fi chip on this board, or its firmware is not in /firmware");
+		m_pWLAN = 0;		// a half-started driver is left alone
+		return;
+	}
+	m_pNet = new CNetSubSystem (0, 0, 0, 0, HOSTNAME, NetDeviceTypeWLAN);
+	if (m_pNet == 0 || !m_pNet->Initialize (FALSE))
+	{
+		Log ("Wi-Fi:  network start failed");
+		m_pNet = 0;
+		return;
+	}
+	m_pWPASupplicant = new CWPASupplicant (WIFI_CONFIG);
+	if (m_pWPASupplicant == 0 || !m_pWPASupplicant->Initialize ())
+	{
+		Log ("Wi-Fi:  cannot start WPA (check wpa_supplicant.conf)");
+		m_pWPASupplicant = 0;
+		return;
+	}
+	new CTimeTask (m_pNet, m_NTPServer);
+	m_bNetActive = true;
+	m_nNetStart = CTimer::GetClockTicks64 ();
+	Say ("Wi-Fi:  joining; the clock is set from %s when it answers", m_NTPServer);
+}
+
+static long DaysFromCivil (int y, unsigned m, unsigned d)
+{
+	y -= m <= 2;
+	long era = (y >= 0 ? y : y - 399) / 400;
+	unsigned yoe = (unsigned) (y - era * 400);
+	unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097 + (long) doe - 719468;
+}
+
+// Main loop, after each frame: once the time is in, set the Pi's clock
+// (local time, so FatFs dates files in the UK's own time)
+void CKernel::UpdateNetwork (u64 nNow)
+{
+	if (!m_bNetActive || m_bTimeDone)
+	{
+		return;
+	}
+	if (!s_bNTPDone && nNow - m_nNetStart < NET_GIVE_UP_US)
+	{
+		return;
+	}
+	m_bTimeDone = true;
+	m_bNetActive = false;		// nothing else uses the network yet
+	if (s_nNTPTime == 0)
+	{
+		Log ("Network: no time from %s (not connected, or no answer)", m_NTPServer);
+		FlushBootLog ();
+		return;
+	}
+	time_t t = s_nNTPTime;
+	struct tm Tm;
+	localtime_r (&t, &Tm);
+	long nLocal = DaysFromCivil (Tm.tm_year + 1900, Tm.tm_mon + 1, Tm.tm_mday) * 86400L
+		    + Tm.tm_hour * 3600L + Tm.tm_min * 60L + Tm.tm_sec;
+	mTimer.SetTime ((unsigned) nLocal, TRUE);
+	Log ("Clock:  set from %s: %04d-%02d-%02d %02d:%02d:%02d (%s)", m_NTPServer,
+	     Tm.tm_year + 1900, Tm.tm_mon + 1, Tm.tm_mday, Tm.tm_hour, Tm.tm_min, Tm.tm_sec,
+	     Tm.tm_isdst > 0 ? "summer time" : "winter time");
+	FlushBootLog ();
+}
+
+bool CKernel::ClockText (char *pBuf, size_t nSize)
+{
+	unsigned nTime = mTimer.GetLocalTime ();
+	if (!m_bTimeDone || nTime < 1000000000)
+	{
+		return false;
+	}
+	snprintf (pBuf, nSize, "%02u:%02u:%02u", nTime / 3600 % 24, nTime / 60 % 60, nTime % 60);
+	return true;
 }
 
 // ---- Sound over HDMI (Pi 1-4 and the Zeros; Circle has none on the Pi 5) ----
@@ -956,6 +1130,7 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 	Say ("USB:    %u keyboard(s) found (more can be plugged in later)", CountKeyboards ());
 
 	SetupDisplay ();
+	StartWiFi ();
 	m_bKeyLog = mOptions.GetAppOptionDecimal ("keylog", 0) == 1;
 	m_bDebug = mOptions.GetAppOptionDecimal ("debug", 0) == 1;
 	m_bRawKeys = strcmp (mOptions.GetAppOptionString ("keys", "typing"), "raw") == 0;
@@ -1019,6 +1194,8 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			nNextDraw = nNow + FRAME_US;
 		}
 
+		UpdateNetwork (nNow);
+
 		if (nNow >= nNextUSB)
 		{
 			UpdateUSB ();
@@ -1036,12 +1213,16 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 
 		if (m_bDebug && nNow >= nNextStatus)
 		{
-			char Text[160];
+			char Text[160], Clock[16];
+			if (!ClockText (Clock, sizeof Clock))
+			{
+				strcpy (Clock, "--:--:--");
+			}
 			unsigned nQueued = m_pSound != 0
 				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
 			snprintf (Text, sizeof Text,
-				  "UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u WAIT %u KBD %u SDOK %u SDFAIL %u SAVE %uMS SND %u",
-				  (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
+				  "%s UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u WAIT %u KBD %u SDOK %u SDFAIL %u SAVE %uMS SND %u",
+				  Clock, (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
 				  s_nFrame, dragon_irqs (), s_nKeyReports, s_nKeyDrops, keyfeed_waiting (), CountKeyboards (),
 				  m_nFlushOK, m_nFlushFail, m_nLastSaveMs, nQueued);
 			DrawStatus (Text);
@@ -1091,7 +1272,12 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 		{
 			while (CTimer::GetClockTicks64 () < nNextFrame)
 			{
-				// wait; USB keys arrive by interrupt meanwhile
+				// wait; USB keys arrive by interrupt meanwhile, and the
+				// network (while it has work) gets the spare time
+				if (m_bNetActive)
+				{
+					m_Scheduler.Yield ();
+				}
 			}
 			nNextFrame += FRAME_US;
 			if (CTimer::GetClockTicks64 () > nNextFrame + 4 * FRAME_US)

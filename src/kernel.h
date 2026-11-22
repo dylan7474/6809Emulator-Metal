@@ -11,6 +11,10 @@
 
 #include <circle_stdlib_app.h>
 #include <circle/usb/usbkeyboard.h>
+#include <circle/sched/scheduler.h>
+#include <circle/net/netsubsystem.h>
+#include <wlan/bcm4343.h>
+#include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
 #include <fatfs/ff.h>
 
 #define MAX_KEYBOARDS	4	// keyboards in use at once (one often shows up as two)
@@ -50,6 +54,11 @@ private:
 	void StartSound (void);
 	void FeedSound (void);
 
+	// Wi-Fi + internet time (for file dates; the Dragon has no clock)
+	void StartWiFi (void);
+	void UpdateNetwork (u64 nNow);
+	bool ClockText (char *pBuf, size_t nSize);	// "HH:MM:SS", false = not set
+
 	// Display
 	void SetupDisplay (void);
 	void Blit (bool bForce);
@@ -63,6 +72,7 @@ private:
 	static void KeyRemovedHandler (CDevice *pDevice, void *pContext);
 
 private:
+	CScheduler	m_Scheduler;		// first: Circle's network runs as tasks
 	CUSBHCIDevice	m_USBHCI;
 	CEMMCDevice	m_EMMC;
 	FATFS		m_FileSystem;
@@ -78,6 +88,15 @@ private:
 	bool		m_bTurbo;		// F2: run flat out
 	bool		m_bKeyLog;		// cmdline.txt keylog=1: log every USB key
 	void		*m_pSound;		// CHDMISoundBaseDevice, or 0 (no sound)
+
+	CBcm4343Device	*m_pWLAN;
+	CNetSubSystem	*m_pNet;
+	CWPASupplicant	*m_pWPASupplicant;
+	bool		m_bNetActive;		// the main loop gives the network turns
+	bool		m_bTimeDone;		// time set, or given up
+	u64		m_nNetStart;
+	char		m_NTPServer[64];	// cmdline.txt ntp=
+	char		m_TimeZone[64];		// cmdline.txt tz= (POSIX TZ)
 	bool		m_bRawKeys;		// cmdline.txt keys=raw: no typing feeder
 	bool		m_bDebug;		// cmdline.txt debug=1: status line + log save every 5 s
 	unsigned	m_nFlushOK, m_nFlushFail;	// boot log saves to the SD card
