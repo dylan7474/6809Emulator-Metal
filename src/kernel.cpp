@@ -119,6 +119,16 @@ CKernel::CKernel (void)
 	m_bTurbo (false),
 	m_bKeyLog (false),
 	m_pSound (0),
+	m_bAdmin (false),
+	m_nAdminScreen (AdminMenu),
+	m_nSel (0),
+	m_nTop (0),
+	m_nAdminScale (2),
+	m_bAdminDirty (false),
+	m_bMuted (false),
+	m_nMessageUntil (0),
+	m_bTapeOpen (false),
+	m_bRecOpen (false),
 	m_pWLAN (0),
 	m_pNet (0),
 	m_pWPASupplicant (0),
@@ -136,6 +146,8 @@ CKernel::CKernel (void)
 	m_pFB (0)
 {
 	s_pThis = this;
+	m_Message[0] = '\0';
+	m_TapeName[0] = '\0';
 	for (unsigned i = 0; i < MAX_KEYBOARDS; i++)
 	{
 		m_pKeyboards[i] = 0;
@@ -301,6 +313,15 @@ void CKernel::PanicHandler (void)
 static FIL s_LogFile;
 static bool s_bLogOpen;
 static unsigned s_nLogSaved;		// bytes of s_BootLog already in the file
+
+void CKernel::CloseBootLog (void)
+{
+	if (s_bLogOpen)
+	{
+		f_close (&s_LogFile);
+		s_bLogOpen = false;
+	}
+}
 
 void CKernel::FlushBootLog (void)
 {
@@ -675,6 +696,10 @@ void CKernel::FeedSound (void)
 {
 	static s16 Mono[SOUND_FRAME * 2];
 	unsigned n = dragon_audio_take (Mono, sizeof Mono / sizeof Mono[0]);
+	if (m_bMuted)
+	{
+		memset (Mono, 0, n * sizeof Mono[0]);	// keep the queue fed, silently
+	}
 	if (m_pSound == 0 || n == 0)
 	{
 		return;
@@ -1070,6 +1095,27 @@ void CKernel::DrainInput (void)
 
 		s_nKeyOut = (s_nKeyOut + 1) % (sizeof s_KeyQueue / sizeof s_KeyQueue[0]);
 
+		if (Event.Down && Event.Usage == USB_KEY_F12)
+		{
+			if (m_bAdmin) CloseAdmin (); else OpenAdmin ();
+			s_Held[Event.Usage] = true;
+			continue;
+		}
+		if (m_bAdmin)
+		{
+			// Keys belong to the admin screen; the Dragon sees none of them
+			s_Held[Event.Usage] = Event.Down;
+			if (Event.Down)
+			{
+				AdminKey (Event.Usage);
+			}
+			continue;
+		}
+		if (!Event.Down && Event.Usage == USB_KEY_F12)
+		{
+			s_Held[Event.Usage] = false;
+			continue;
+		}
 		if (Event.Down && Event.Usage == USB_KEY_F1)
 		{
 			dragon_reset ();
@@ -1089,6 +1135,10 @@ void CKernel::DrainInput (void)
 		bChanged = true;
 	}
 
+	if (m_bAdmin)
+	{
+		return;
+	}
 	u8 Matrix[8];
 	if (m_bRawKeys)
 	{
@@ -1146,6 +1196,7 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 		Log ("Keys:   keylog=1 in cmdline.txt: every USB key goes in the log");
 	}
 	dragon_init (m_pROM);
+	StartTapes ();
 	StartSound ();
 	Log ("Dragon: started");
 	FlushBootLog ();
@@ -1179,19 +1230,41 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 	{
 		DrainInput ();
 
-		u64 nBefore = CTimer::GetClockTicks64 ();
-		dragon_run_frame ();
-		FeedSound ();
-		s_nFrame++;
-		nNow = CTimer::GetClockTicks64 ();
-		nEmuUs += nNow - nBefore;
-		nFrames++;
-
-		// Draw at most 50 times a second (turbo runs many frames per draw)
-		if (nNow >= nNextDraw)
+		if (m_bAdmin)
 		{
-			Blit (false);
-			nNextDraw = nNow + FRAME_US;
+			// Admin screen open: the Dragon is paused
+			nNow = CTimer::GetClockTicks64 ();
+			static u64 nNextAdminDraw;
+			if (m_bAdminDirty || nNow >= nNextAdminDraw)
+			{
+				DrawAdmin ();
+				nNextAdminDraw = nNow + 1000000;	// clock + tape counter
+			}
+		}
+		else
+		{
+			u64 nBefore = CTimer::GetClockTicks64 ();
+			dragon_run_frame ();
+			FeedSound ();
+			s_nFrame++;
+			nNow = CTimer::GetClockTicks64 ();
+			nEmuUs += nNow - nBefore;
+			nFrames++;
+
+			// Draw at most 50 times a second (turbo runs many frames per draw)
+			if (nNow >= nNextDraw)
+			{
+				Blit (false);
+				nNextDraw = nNow + FRAME_US;
+			}
+
+			// The tape strip under the picture (debug=1 shows its own)
+			static u64 nNextStrip;
+			if (!m_bDebug && nNow >= nNextStrip)
+			{
+				DrawTapeStrip ();
+				nNextStrip = nNow + 250000;
+			}
 		}
 
 		UpdateNetwork (nNow);
@@ -1211,7 +1284,7 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			nNextBeat = nNow + 250000;
 		}
 
-		if (m_bDebug && nNow >= nNextStatus)
+		if (m_bDebug && !m_bAdmin && nNow >= nNextStatus)
 		{
 			char Text[160], Clock[16];
 			if (!ClockText (Clock, sizeof Clock))

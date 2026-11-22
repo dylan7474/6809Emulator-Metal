@@ -54,6 +54,34 @@ private:
 	void StartSound (void);
 	void FeedSound (void);
 
+	// Tape deck files on the SD card (admin.cpp)
+	void StartTapes (void);
+	bool TapeInsert (const char *pName);
+	void TapeEject (void);
+	void ScanTapes (void);
+	static unsigned TapeRead (void *pCtx, uint32_t nOffset, uint8_t *pBuf, unsigned nLen);
+	static void RecBegin (void *pCtx);
+	static void RecWav (void *pCtx, const uint8_t *pSamples, unsigned nCount);
+	static void RecCas (void *pCtx, const uint8_t *pBytes, unsigned nCount);
+	static void RecEnd (void *pCtx, const char *pName);
+	void TapeStatusText (char *pBuf, size_t nSize);
+	void DrawTapeStrip (void);
+
+	// The admin screen (F12) and safe shutdown (admin.cpp)
+	enum TAdminScreen { AdminMenu, AdminFiles, AdminPrograms, AdminConfirm };
+	void OpenAdmin (void);
+	void CloseAdmin (void);
+	void DrawAdmin (void);
+	void AdminKey (u8 Usage);
+	void AdminLine (unsigned nRow, const char *pText, bool bSelected, bool bTitle);
+	void Message (const char *pFormat, ...);
+	void ShutDown (void);
+	void CloseBootLog (void);
+	u32 Pixel (unsigned r, unsigned g, unsigned b) const;
+	void DrawText (unsigned x, unsigned y, unsigned nScale, const char *pText,
+		       unsigned nWidth, u32 Fg, u32 Bg);
+	void FillScreen (u32 Colour);
+
 	// Wi-Fi + internet time (for file dates; the Dragon has no clock)
 	void StartWiFi (void);
 	void UpdateNetwork (u64 nNow);
@@ -88,6 +116,20 @@ private:
 	bool		m_bTurbo;		// F2: run flat out
 	bool		m_bKeyLog;		// cmdline.txt keylog=1: log every USB key
 	void		*m_pSound;		// CHDMISoundBaseDevice, or 0 (no sound)
+
+	// Admin screen + tape deck files
+	bool		m_bAdmin;
+	TAdminScreen	m_nAdminScreen;
+	unsigned	m_nSel, m_nTop, m_nAdminScale;
+	bool		m_bAdminDirty;
+	bool		m_bMuted;
+	char		m_Message[96];
+	u64		m_nMessageUntil;
+	char		m_TapeName[96];
+	FIL		m_TapeFile;
+	bool		m_bTapeOpen;
+	FIL		m_RecWav, m_RecCas;
+	bool		m_bRecOpen;
 
 	CBcm4343Device	*m_pWLAN;
 	CNetSubSystem	*m_pNet;

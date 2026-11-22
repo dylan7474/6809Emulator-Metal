@@ -49,11 +49,42 @@ One SD card works in every Pi: the firmware picks the right kernel.
 | Up, Down, Right | arrows |
 | F1 | reset the CPU (your program is kept) |
 | F2 | turbo on/off (runs as fast as the Pi can) |
+| F12 | the admin screen (tapes, reset, sound, shut down) |
+
+## The admin screen (F12)
+
+F12 pauses the Dragon and opens a menu (arrow keys, Enter, Esc; the chosen
+line has a `>` marker as well as a highlight):
+
+- **Tape deck:** choose a tape from `tapes/` on the SD card, play / stop,
+  rewind, back or forward 10 s, jump to a program (on `.cas` tapes),
+  eject. The tape counter and length show at the top, and while a tape is
+  in, the strip under the Dragon's picture shows its name, counter, PLAY
+  or STOP and the motor.
+- Reset the Dragon (the program in memory is kept), sound on/off, turbo.
+- **Shut down:** finishes any recording, closes every file on the SD card
+  and shows "It is now safe to switch off".
+
+## Tapes
+
+Put `.cas` or `.wav` tape files in a `tapes` folder on the SD card, choose
+one with F12, then type `CLOAD` (or `CLOADM`) as on a real Dragon. Tapes
+play in real time: the Dragon's motor relay starts and stops them, and
+`AUDIO ON` lets you hear them through the TV. `.wav` files can be 8 or
+16-bit, mono or stereo, any sample rate (recordings of real tapes work;
+the input copes with quiet and noisy recordings). `cmdline.txt`
+`tape=NAME.cas` inserts a tape at power-on.
+
+`CSAVE "NAME"` (and `CSAVEM`, data files) record to `tapes/NAME.wav` (a
+real tape recording: play it into a real Dragon) and `tapes/NAME.cas`.
+An existing name is never overwritten: the new one becomes `NAME-2`,
+`NAME-3` and so on. Both kinds load in XRoar, and XRoar's load here.
 
 ## Not yet
 
-Graphics modes (`PMODE` and the SAM display offset), cassette,
-joysticks, the SAM's fast-CPU poke (`POKE 65495,0`) and cartridges.
+Graphics modes (`PMODE` and the SAM display offset), fast tape loading,
+snapshots, DragonDOS disks, joysticks, the SAM's fast-CPU poke
+(`POKE 65495,0`) and cartridges.
 
 ## SD card
 

@@ -7,7 +7,7 @@
 CIRCLESTDLIB ?= ../circle-stdlib
 include $(CIRCLESTDLIB)/Config.mk
 
-OBJS = main.o kernel.o keymap_usb.o core/dragon_cpu.o core/vdg.o core/tape.o
+OBJS = main.o kernel.o admin.o keymap_usb.o core/dragon_cpu.o core/vdg.o core/tape.o
 
 include $(CIRCLEHOME)/Rules.mk
 

@@ -17,6 +17,7 @@ extern "C" {
 // USB HID usages the platform handles itself (not Dragon keys)
 #define USB_KEY_F1	0x3A	// reset
 #define USB_KEY_F2	0x3B	// turbo on/off
+#define USB_KEY_F12	0x45	// admin screen
 #define USB_KEY_LSHIFT	0xE1
 #define USB_KEY_RSHIFT	0xE5
 
