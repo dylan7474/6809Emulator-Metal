@@ -20,6 +20,7 @@
  * GNU General Public License for more details.
  */
 #include "dragon.h"
+#include "tape.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -375,7 +376,8 @@ static uint8_t pia_read(uint16_t addr)
 		}
 		p->cra &= 0x3F;		// reading the data clears the flags
 		{
-			uint8_t in = (p == &pia0) ? keyboard_rows() : 0xFE;	// PIA1 PA0 cassette in: low
+			uint8_t in = (p == &pia0) ? keyboard_rows()
+				   : (uint8_t)(0xFE | (tape_input_level() ? 1 : 0));	// PIA1 PA0: cassette in
 			return pia_out_a(p) & in;
 		}
 	case 1:
@@ -415,6 +417,8 @@ static void pia_write(uint16_t addr, uint8_t val)
 	}
 	// The VDG reads PIA1 port B (mode bits); keep a copy where vdg.c looks
 	ram[0xFF22] = pia_out_b(&pia1);
+	// Cassette motor relay: PIA1 CA2 as an output, set high
+	tape_set_motor((pia1.cra & 0x38) == 0x38);
 	audio_update_level();
 }
 
@@ -2578,7 +2582,8 @@ static void audio_update_level(void)
 	if (pia_cx2(pia1.crb))					// PIA1 CB2: sound mux on
 	{
 		unsigned source = (pia_cx2(pia0.crb) ? 2 : 0) | (pia_cx2(pia0.cra) ? 1 : 0);
-		float raw = source == 0 ? (float)(pia_out_a(&pia1) & 0xFC) / 252.0f : 0.0f;
+		float raw = source == 0 ? (float)(pia_out_a(&pia1) & 0xFC) / 252.0f
+			  : source == 1 ? (tape_input_level() ? 1.0f : 0.0f) : 0.0f;	// 1 = tape (AUDIO ON)
 		audio_level = raw * mux_gain[source][sindex] + mux_offset[source][sindex];
 	}
 	else if (sbs_on)
@@ -2644,6 +2649,7 @@ void dragon_init(const uint8_t *rom_image)
 	total_cycles = 0;
 	audio_level = 0;
 	audio_count = 0;
+	tape_reset();
 	dragon_reset();
 }
 
@@ -2652,6 +2658,7 @@ void dragon_reset(void)
 	// The reset button resets the CPU and the PIAs (RAM is kept)
 	pia_reset(&pia0);
 	pia_reset(&pia1);
+	tape_set_motor(false);
 	cpu_sync = cpu_cwai = false;
 	CC = CC_I | CC_F;
 	DP = 0;
@@ -2684,6 +2691,11 @@ void dragon_run_frame(void)
 			irq_count++;
 		}
 		audio_run(cycles, level);
+		tape_run(cycles, (pia_out_a(&pia1) >> 2) & 63);
+		if (dragon_tape_motor())
+		{
+			audio_update_level();	// the tape can be heard through the mux
+		}
 		kbd_update_cycles(cycles);
 		frame_cycle += (unsigned)cycles;
 		total_cycles += (unsigned)cycles;

@@ -87,6 +87,56 @@ bool dragon_typing(void);		// still keys waiting to be typed
 // Which key gives this character: false if the Dragon has no such key.
 bool dragon_char_key(char c, int *row, int *col, bool *shift);
 
+// ---- Cassette deck (tape.c) ---------------------------------------------------
+// One input tape (.CAS or .WAV) plays into the cassette port in real time,
+// started and stopped by the Dragon's motor relay (PIA1 CA2) while PLAY is
+// down.  Anything the Dragon writes to tape (CSAVE, CSAVEM, data files) is
+// recorded as a .WAV (real-tape compatible) and decoded to .CAS bytes.
+// The platform supplies the file I/O.
+
+#define DRAGON_TAPE_CAS		1
+#define DRAGON_TAPE_WAV		2
+#define DRAGON_TAPE_WAV_RATE	22050	// recording: 8-bit unsigned mono
+
+// Read len bytes at offset of the inserted tape file; returns bytes read.
+typedef unsigned (*DragonTapeRead)(void *ctx, uint32_t offset, uint8_t *buf, unsigned len);
+
+// Insert a tape (PLAY is pressed); false if it is not a usable WAV.
+bool dragon_tape_insert(int kind, uint32_t size, DragonTapeRead read, void *ctx);
+void dragon_tape_eject(void);
+bool dragon_tape_inserted(void);
+void dragon_tape_play(bool play);	// the deck's PLAY / STOP keys
+bool dragon_tape_playing(void);
+bool dragon_tape_motor(void);		// the Dragon's motor relay is on
+void dragon_tape_seek_ms(uint32_t ms);	// rewind = 0; fast forward/back
+uint32_t dragon_tape_pos_ms(void);	// tape counter
+uint32_t dragon_tape_len_ms(void);
+
+// Programs found on a .CAS tape (name blocks), for "jump to program"
+typedef struct
+{
+	char name[9];
+	uint8_t type;		// 0 BASIC, 1 data, 2 machine code
+	uint32_t ms;		// tape position of its leader
+} DragonTapeProgram;
+unsigned dragon_tape_programs(DragonTapeProgram *list, unsigned max);
+
+// Recording.  begin() when the Dragon starts writing a tape; wav() and
+// cas() with the data as it comes; end() once the end-of-file block is
+// written and the motor stops (name = the program's name from its header,
+// "" if none).  NULL = no recording.
+typedef struct
+{
+	void *ctx;
+	void (*begin)(void *ctx);
+	void (*wav)(void *ctx, const uint8_t *samples, unsigned n);
+	void (*cas)(void *ctx, const uint8_t *bytes, unsigned n);
+	void (*end)(void *ctx, const char *name);
+} DragonTapeRecorder;
+void dragon_tape_recorder(const DragonTapeRecorder *rec);
+void dragon_tape_record_finish(void);	// end a recording now (eject, shutdown)
+bool dragon_tape_recording(void);
+
 // ---- Video (vdg.c) -----------------------------------------------------------
 
 #define VDG_WIDTH	256

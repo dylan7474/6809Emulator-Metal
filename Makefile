@@ -105,8 +105,8 @@ endef
 $(foreach t,$(TARGETS),$(eval $(call TARGET_RULES,$(t))))
 
 # ---- PC build + tests (same core, renderer and keyboard map) ---------------
-CORE_SRC = src/core/dragon_cpu.c src/core/vdg.c
-CORE_H   = src/core/dragon.h
+CORE_SRC = src/core/dragon_cpu.c src/core/vdg.c src/core/tape.c
+CORE_H   = src/core/dragon.h src/core/tape.h
 
 build/pc/dragon_pc: tools/pc/dragon_pc.c $(CORE_SRC) $(CORE_H)
 	mkdir -p build/pc
