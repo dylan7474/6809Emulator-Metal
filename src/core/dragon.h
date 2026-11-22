@@ -108,6 +108,11 @@ extern const uint8_t vdg_palette[VDG_COLOURS][3];
 // Text and semigraphics-4 from the 512 bytes at $0400.
 void vdg_render(const uint8_t *memory, uint8_t picture[VDG_HEIGHT][VDG_WIDTH]);
 
+// One row (0-11) of the 6847's 8 x 12 cell for an ASCII character
+// (bit 7 = leftmost pixel); lower case shows as upper case.  For the
+// platform's own status text.
+uint8_t vdg_font_row(char c, int row);
+
 // The text screen as plain characters (16 rows of 32 + '\n'), for tests
 // and logs.  buf must hold 16 * 33 + 1 bytes.
 void vdg_text(const uint8_t *memory, char *buf);

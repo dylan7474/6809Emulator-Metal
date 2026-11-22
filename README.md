@@ -78,6 +78,10 @@ also copy `build/sdcard/` plus `d32.rom` onto any FAT32 card.
 - `debug=1` adds a status line every 5 s (frames, IRQs, the Dragon's PC,
   SYNC/CWAI, sound queue) and saves the log to the card each time, so a
   freeze shows when it happened. The saves can cause small hiccups.
+  It also draws a status line under the picture every second (uptime,
+  Circle's 100 Hz interrupt tick count, frames, Dragon IRQs, USB key
+  reports and drops, keyboards, SD saves OK/failed, sound queue), which
+  keeps working even if the SD card or USB stop.
 
 While it runs, the green ACT LED blinks twice a second. If the picture
 freezes but the LED keeps blinking, the Pi is fine and the Dragon is

@@ -183,6 +183,26 @@ void vdg_render(const uint8_t *memory, uint8_t picture[VDG_HEIGHT][VDG_WIDTH])
 	}
 }
 
+uint8_t vdg_font_row(char c, int row)
+{
+	static const char order[] =
+		"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !\"#$%&'()*+,-./0123456789:;<=>?";
+	if (!font_ready)
+	{
+		build_font();
+	}
+	if (c >= 'a' && c <= 'z')
+	{
+		c = (char)(c - 32);
+	}
+	const char *p = c ? strchr(order, c) : NULL;
+	if (p == NULL || row < 0 || row > 11)
+	{
+		return 0;
+	}
+	return font[p - order][row];
+}
+
 void vdg_text(const uint8_t *memory, char *buf)
 {
 	// Character codes 0-63 in the 6847's order, as ASCII

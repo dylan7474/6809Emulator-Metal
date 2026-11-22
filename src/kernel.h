@@ -53,6 +53,7 @@ private:
 	// Display
 	void SetupDisplay (void);
 	void Blit (bool bForce);
+	void DrawStatus (const char *pText);	// debug=1: text in the strip under the picture
 
 	// Input (the USB handler runs in interrupt context: it only queues)
 	void UpdateUSB (void);
@@ -78,6 +79,7 @@ private:
 	bool		m_bKeyLog;		// cmdline.txt keylog=1: log every USB key
 	void		*m_pSound;		// CHDMISoundBaseDevice, or 0 (no sound)
 	bool		m_bDebug;		// cmdline.txt debug=1: status line + log save every 5 s
+	unsigned	m_nFlushOK, m_nFlushFail;	// boot log saves to the SD card
 
 	CUSBKeyboardDevice * volatile m_pKeyboards[MAX_KEYBOARDS];
 	unsigned	m_nUSBLogFlushes;

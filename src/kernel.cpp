@@ -53,6 +53,8 @@ struct TKeyEvent { u8 Usage; u8 Down; };
 
 static TKeyEvent s_KeyQueue[64];
 static volatile unsigned s_nKeyIn, s_nKeyOut;
+static volatile unsigned s_nKeyReports;		// USB keyboard reports received (debug)
+static volatile unsigned s_nKeyDrops;		// key events lost: queue full (debug)
 static bool s_Held[256];			// main loop only
 static unsigned s_nFrame;			// frames run so far
 static unsigned s_DownFrame[256];		// frame each key went down
@@ -64,6 +66,7 @@ static void QueueKey (u8 Usage, bool bDown)
 	unsigned nNext = (s_nKeyIn + 1) % (sizeof s_KeyQueue / sizeof s_KeyQueue[0]);
 	if (nNext == s_nKeyOut)
 	{
+		s_nKeyDrops++;
 		return;		// full: drop
 	}
 	s_KeyQueue[s_nKeyIn].Usage = Usage;
@@ -112,6 +115,8 @@ CKernel::CKernel (void)
 	m_bKeyLog (false),
 	m_pSound (0),
 	m_bDebug (false),
+	m_nFlushOK (0),
+	m_nFlushFail (0),
 	m_nUSBLogFlushes (0),
 	m_bUSBRemoved (false),
 	m_pROM (0),
@@ -286,11 +291,19 @@ void CKernel::FlushBootLog (void)
 	FIL File;
 	if (f_open (&File, m_BootLogFile, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
 	{
+		m_nFlushFail++;
 		return;
 	}
-	UINT nWritten;
-	f_write (&File, s_BootLog, s_nBootLog, &nWritten);
-	f_close (&File);
+	UINT nWritten = 0;
+	FRESULT Result = f_write (&File, s_BootLog, s_nBootLog, &nWritten);
+	if (f_close (&File) == FR_OK && Result == FR_OK && nWritten == s_nBootLog)
+	{
+		m_nFlushOK++;
+	}
+	else
+	{
+		m_nFlushFail++;
+	}
 }
 
 void CKernel::LogBoard (void)
@@ -624,6 +637,56 @@ void CKernel::Blit (bool bForce)
 	}
 }
 
+// debug=1: one line of text in the black strip under the Dragon picture
+// (white on black, the 6847 font at 2x).  Drawn straight from the main
+// loop, so it keeps working when the SD card or USB stop: a photo of the
+// screen then shows which part died.
+void CKernel::DrawStatus (const char *pText)
+{
+	const unsigned nScale = 2, nRows = 12 * nScale;
+	unsigned nTop = m_nOffY + VDG_HEIGHT * m_nScale + 4;
+	if (m_pFB == 0 || nTop + nRows > m_nFBHeight)
+	{
+		return;		// no room under the picture
+	}
+	const unsigned nBytesPP = m_nFBDepth / 8;
+	unsigned nChars = strlen (pText);
+	if (nChars > m_nFBWidth / (8 * nScale))
+	{
+		nChars = m_nFBWidth / (8 * nScale);
+	}
+	unsigned nPixels = m_nFBWidth & ~1u;
+	static u32 LineBuf[4096] __attribute__((aligned(64)));
+	if (nPixels * nBytesPP > sizeof LineBuf || (nBytesPP != 2 && nBytesPP != 4))
+	{
+		return;
+	}
+	u32 White = nBytesPP == 2 ? 0xFFFF : COLOR32 (255, 255, 255, 255);
+	u32 Black = nBytesPP == 2 ? 0 : COLOR32 (0, 0, 0, 255);
+	for (unsigned y = 0; y < nRows; y++)
+	{
+		for (unsigned x = 0; x < nPixels; x++)
+		{
+			unsigned nChar = x / (8 * nScale);
+			u32 Colour = Black;
+			if (nChar < nChars)
+			{
+				u8 Bits = vdg_font_row (pText[nChar], y / nScale);
+				Colour = (Bits & (0x80 >> ((x / nScale) & 7))) ? White : Black;
+			}
+			if (nBytesPP == 2)
+			{
+				((u16 *) LineBuf)[x] = (u16) Colour;
+			}
+			else
+			{
+				LineBuf[x] = Colour;
+			}
+		}
+		memcpy (m_pFB + (nTop + y) * m_nFBPitch, LineBuf, nPixels * nBytesPP);
+	}
+}
+
 // ---- USB keyboards ------------------------------------------------------------
 // A keyboard often shows up as more than one device (ukbd1 + ukbd2), so
 // several are watched at once, each with its own slot and key state.
@@ -707,6 +770,7 @@ void CKernel::UpdateUSB (void)
 void CKernel::KeyStatusHandler (unsigned char ucModifiers, const unsigned char RawKeys[6], void *pArg)
 {
 	unsigned nSlot = (unsigned) (uintptr) pArg;
+	s_nKeyReports++;
 	unsigned char &ucOldModifiers = s_ucOldModifiers[nSlot];
 	unsigned char *OldKeys = s_OldKeys[nSlot];
 
@@ -895,6 +959,7 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 	u64 nNextBeat = nNow;			// ACT LED heartbeat
 	bool bLED = false;
 	u64 nNextDebug = nNow + 5000000;
+	u64 nNextStatus = nNow + 1000000;
 	u64 nLoopStart = nNow;
 
 	// Speed: CPU time spent inside dragon_run_frame()
@@ -938,6 +1003,20 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			nNextBeat = nNow + 250000;
 		}
 
+		if (m_bDebug && nNow >= nNextStatus)
+		{
+			char Text[160];
+			unsigned nQueued = m_pSound != 0
+				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
+			snprintf (Text, sizeof Text,
+				  "UP %us TICKS %u FRAMES %u IRQS %u KEYRPT %u DROP %u KBD %u SDOK %u SDFAIL %u SND %u",
+				  (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
+				  s_nFrame, dragon_irqs (), s_nKeyReports, s_nKeyDrops, CountKeyboards (),
+				  m_nFlushOK, m_nFlushFail, nQueued);
+			DrawStatus (Text);
+			nNextStatus = nNow + 1000000;
+		}
+
 		if (m_bDebug && nNow >= nNextDebug)
 		{
 			DragonRegs Regs;
@@ -945,10 +1024,10 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 			unsigned nQueued = m_pSound != 0
 				? ((CSoundBaseDevice *) m_pSound)->GetQueueFramesAvail () : 0;
 			static const char *const Wait[] = { "", " SYNC", " CWAI" };
-			Log ("Debug:  %us frame %u irqs %u PC=%04X CC=%02X S=%04X%s sound %u%s",
-			     (unsigned) ((nNow - nLoopStart) / 1000000), s_nFrame, dragon_irqs (),
-			     Regs.pc, Regs.cc, Regs.s, Wait[Regs.wait], nQueued,
-			     m_bTurbo ? " turbo" : "");
+			Log ("Debug:  %us ticks %u frame %u irqs %u PC=%04X CC=%02X S=%04X%s sound %u keyrpt %u drop %u sd %u/%u%s",
+			     (unsigned) ((nNow - nLoopStart) / 1000000), (unsigned) CTimer::Get ()->GetTicks (),
+			     s_nFrame, dragon_irqs (), Regs.pc, Regs.cc, Regs.s, Wait[Regs.wait], nQueued,
+			     s_nKeyReports, s_nKeyDrops, m_nFlushOK, m_nFlushFail, m_bTurbo ? " turbo" : "");
 			FlushBootLog ();
 			nNextDebug = CTimer::GetClockTicks64 () + 5000000;
 		}
