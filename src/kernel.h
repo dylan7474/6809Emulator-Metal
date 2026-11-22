@@ -46,6 +46,10 @@ private:
 	bool LoadROM (void);
 	void WriteSpeedFile (unsigned nFrameUs);
 
+	// Sound over HDMI
+	void StartSound (void);
+	void FeedSound (void);
+
 	// Display
 	void SetupDisplay (void);
 	void Blit (bool bForce);
@@ -72,6 +76,7 @@ private:
 	bool		m_bScreenOK;
 	bool		m_bTurbo;		// F2: run flat out
 	bool		m_bKeyLog;		// cmdline.txt keylog=1: log every USB key
+	void		*m_pSound;		// CHDMISoundBaseDevice, or 0 (no sound)
 
 	CUSBKeyboardDevice * volatile m_pKeyboards[MAX_KEYBOARDS];
 	unsigned	m_nUSBLogFlushes;

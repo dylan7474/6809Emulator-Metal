@@ -24,6 +24,18 @@ One SD card works in every Pi: the firmware picks the right kernel.
   set bit) and the eight-colour semigraphics-4 blocks that BASIC's `CLS n`,
   `SET`/`RESET` and `CHR$(128-255)` use. The picture is scaled by a whole
   number and centred (5x on 1080p, 4x on 1024x768).
+- Real speed: every 6809 instruction takes its datasheet cycle count
+  (checked against XRoar's cycle-timed trace: all 2.6 million instructions
+  of a BASIC run agree), and 17,784 cycles make one 50 Hz PAL frame. A
+  `FOR` loop, the cursor blink and `TIMER` run at Dragon speed.
+- The 50 Hz frame interrupt (the VDG's field sync on PIA0 CB1), so
+  `TIMER`, `SOUND` and `PLAY` timing work. Both MC6821 PIAs are emulated:
+  data direction and control registers, Cx1 interrupt flags, IRQ and FIRQ,
+  plus `SYNC` and `CWAI`.
+- Sound over HDMI (Pi Zero to Pi 4; Circle has no HDMI sound on the Pi 5):
+  the 6-bit DAC through the sound mux, plus single-bit sound, at 48 kHz.
+  Levels are the voltages measured on a real Dragon (from XRoar).
+  `SOUND 89,10` plays middle C for 0.8 s; `PLAY` works.
 - USB keyboards, UK layout. Symbols type what the key says (Shift+2 is `"`,
   Shift+; is `:`, Shift+' is `@`). Several keyboards can be used at once,
   and they can be plugged in and out while it runs.
@@ -40,10 +52,8 @@ One SD card works in every Pi: the firmware picks the right kernel.
 
 ## Not yet
 
-These are the same gaps as the ncurses version: graphics modes (`PMODE`
-and the SAM display offset), the 50 Hz interrupt (`TIMER`), sound,
-cassette, joysticks and cycle-exact timing. The core runs 17,800
-instructions per 50 Hz frame, the same as the ncurses version.
+Graphics modes (`PMODE` and the SAM display offset), cassette,
+joysticks, the SAM's fast-CPU poke (`POKE 65495,0`) and cartridges.
 
 ## SD card
 
@@ -64,6 +74,7 @@ also copy `build/sdcard/` plus `d32.rom` onto any FAT32 card.
 
 - `scale=N` uses a smaller whole-number scale than the largest that fits.
 - `keylog=1` writes every USB key event (with its frame number) to the log.
+- `sound=off` turns HDMI sound off.
 
 ### Logs on the card
 
@@ -99,7 +110,11 @@ screen. `dragon_pc -p out.ppm` also saves the picture the Pi would show.
 
 ```sh
 build/pc/dragon_pc -f 300 -t 'PRINT 2+3*4\r' -p shot.ppm local/d32.rom
+build/pc/dragon_pc -f 400 -t 'SOUND 89,10\r' -w sound.wav local/d32.rom
 ```
+
+It types the text once BASIC shows `OK`. `-w` saves the sound as a WAV
+file and `-p` saves the picture.
 
 ### QEMU
 

@@ -14,6 +14,6 @@ include $(CIRCLEHOME)/Rules.mk
 INCLUDE := -I. $(CIRCLE_STDLIB_INCLUDES) $(INCLUDE)
 OPTIMIZE = -O3
 
-LIBS := $(CIRCLE_STDLIB_LIBS)
+LIBS := $(CIRCLEHOME)/lib/sound/libsound.a $(CIRCLE_STDLIB_LIBS)
 
 -include $(DEPS)

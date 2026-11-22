@@ -19,6 +19,10 @@
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
+#include <circle/sound/soundbasedevice.h>
+#if RASPPI <= 4
+#include <circle/sound/hdmisoundbasedevice.h>
+#endif
 #include <circle_glue.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,6 +33,12 @@
 #define FRAME_US	20000		// 50 Hz, like a UK Dragon
 #define STATS_US	10000000	// speed line in the log every 10 s
 #define SPEED_FILE_AT	6		// write the speed file after the 6th (60 s)
+
+#define SOUND_RATE	48000
+#define SOUND_QUEUE_MS	200		// room in the HDMI sound queue
+#define SOUND_FRAME	(SOUND_RATE / 50)	// 960 samples per 50 Hz frame
+#define SOUND_LOW	(2 * SOUND_FRAME)	// below this: write a frame twice
+#define SOUND_HIGH	(6 * SOUND_FRAME)	// above this: skip a frame
 
 static const char *const ROMNames[] = { "SD:/d32.rom", "SD:/dragon32.rom", "SD:/dragon.rom" };
 
@@ -100,6 +110,7 @@ CKernel::CKernel (void)
 	m_bScreenOK (false),
 	m_bTurbo (false),
 	m_bKeyLog (false),
+	m_pSound (0),
 	m_nUSBLogFlushes (0),
 	m_bUSBRemoved (false),
 	m_pROM (0),
@@ -379,14 +390,14 @@ void CKernel::WriteSpeedFile (unsigned nFrameUs)
 		"Board:   %s\r\n"
 		"Kernel:  %u-bit, Circle RASPPI=%u\r\n"
 		"Screen:  %ux%u, %u bpp, Dragon at %ux\r\n"
-		"Frame:   %u.%02u ms of CPU time per 20 ms frame (%u steps)\r\n"
+		"Frame:   %u.%02u ms of CPU time per 20 ms frame (%u Dragon cycles)\r\n"
 		"Headroom: %u.%02ux (how much faster than needed)\r\n"
 		"\r\n"
 		"Written once per boot, 60 s after the Dragon starts.\r\n",
 		VERSION, CMachineInfo::Get ()->GetMachineName (),
 		(unsigned) (sizeof (void *) * 8), (unsigned) RASPPI,
 		m_nFBWidth, m_nFBHeight, m_nFBDepth, m_nScale,
-		nFrameUs / 1000, nFrameUs % 1000 / 10, (unsigned) DRAGON_FRAME_STEPS,
+		nFrameUs / 1000, nFrameUs % 1000 / 10, (unsigned) DRAGON_FRAME_CYCLES,
 		FRAME_US / (nFrameUs ? nFrameUs : 1),
 		(unsigned) ((u64) FRAME_US * 100 / (nFrameUs ? nFrameUs : 1) % 100));
 	if (n <= 0)
@@ -408,6 +419,74 @@ void CKernel::WriteSpeedFile (unsigned nFrameUs)
 	f_write (&File, Text, n, &nWritten);
 	f_close (&File);
 	Log ("wrote %s", m_SpeedFile);
+}
+
+// ---- Sound over HDMI (Pi 1-4 and the Zeros; Circle has none on the Pi 5) ----
+
+void CKernel::StartSound (void)
+{
+#if RASPPI <= 4
+	if (strcmp (mOptions.GetAppOptionString ("sound", "hdmi"), "off") == 0)
+	{
+		Log ("Sound:  off (sound=off in cmdline.txt)");
+		return;
+	}
+	if (!m_bScreenOK)
+	{
+		Log ("Sound:  off (HDMI not running)");
+		return;
+	}
+	CHDMISoundBaseDevice *pSound = new CHDMISoundBaseDevice (&mInterrupt, SOUND_RATE, 384 * 10);
+	if (pSound == 0 || !pSound->AllocateQueue (SOUND_QUEUE_MS))
+	{
+		Log ("Sound:  cannot start HDMI sound");
+		return;			// left alone: its destructor resets HDMI
+	}
+	pSound->SetWriteFormat (SoundFormatSigned16, 2);
+	if (!pSound->Start ())
+	{
+		Log ("Sound:  cannot start HDMI sound");
+		return;
+	}
+	m_pSound = pSound;
+	dragon_audio_rate (SOUND_RATE);
+	Say ("Sound:  HDMI, %u Hz (sound=off in cmdline.txt turns it off)", SOUND_RATE);
+#else
+	Log ("Sound:  none (Circle has no HDMI sound on the Pi 5)");
+#endif
+}
+
+// After each Dragon frame: its ~960 samples, as stereo, into the HDMI queue.
+// The Pi's 50 Hz and the HDMI clock drift a little apart, so now and then
+// a whole frame is played twice or dropped, only when the queue gets near
+// empty or full (steering the amount per frame made a warble in
+// ClassicPi-Metal).  In turbo the Dragon makes sound too fast: it is
+// dropped whenever the queue is full.
+void CKernel::FeedSound (void)
+{
+	static s16 Mono[SOUND_FRAME * 2];
+	unsigned n = dragon_audio_take (Mono, sizeof Mono / sizeof Mono[0]);
+	if (m_pSound == 0 || n == 0)
+	{
+		return;
+	}
+	static s16 Stereo[SOUND_FRAME * 4];
+	for (unsigned i = 0; i < n; i++)
+	{
+		Stereo[2 * i] = Stereo[2 * i + 1] = Mono[i];
+	}
+
+	CSoundBaseDevice *pSound = (CSoundBaseDevice *) m_pSound;
+	unsigned nQueued = pSound->GetQueueFramesAvail ();	// frames waiting to be played
+	if (nQueued > SOUND_HIGH)
+	{
+		return;				// running ahead: skip this frame
+	}
+	pSound->Write (Stereo, n * 2 * sizeof (s16));
+	if (nQueued < SOUND_LOW)
+	{
+		pSound->Write (Stereo, n * 2 * sizeof (s16));	// running dry: once more
+	}
 }
 
 void CKernel::SetupDisplay (void)
@@ -791,6 +870,7 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 		Log ("Keys:   keylog=1 in cmdline.txt: every USB key goes in the log");
 	}
 	dragon_init (m_pROM);
+	StartSound ();
 	Log ("Dragon: started");
 	FlushBootLog ();
 
@@ -820,6 +900,7 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 
 		u64 nBefore = CTimer::GetClockTicks64 ();
 		dragon_run_frame ();
+		FeedSound ();
 		s_nFrame++;
 		nNow = CTimer::GetClockTicks64 ();
 		nEmuUs += nNow - nBefore;

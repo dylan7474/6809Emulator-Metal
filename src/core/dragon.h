@@ -24,9 +24,11 @@ extern "C" {
 
 #define DRAGON_ROM_SIZE		16384
 
-// Instructions run per 50 Hz frame.  Same figure as the ncurses version
-// (17800 steps, ~50 frames a second); the core does not count cycles yet.
-#define DRAGON_FRAME_STEPS	17800
+// Timing of a PAL Dragon: 0.8867 MHz CPU, 57 cycles per video line,
+// 312 lines per 50 Hz frame
+#define DRAGON_LINE_CYCLES	57
+#define DRAGON_FRAME_LINES	312
+#define DRAGON_FRAME_CYCLES	(DRAGON_LINE_CYCLES * DRAGON_FRAME_LINES)	// 17784
 
 // ---- CPU + memory (dragon_cpu.c) -------------------------------------------
 
@@ -36,8 +38,17 @@ void dragon_init(const uint8_t *rom);
 // Reset button: restart the CPU from the reset vector (RAM is kept).
 void dragon_reset(void);
 
-// Run one 50 Hz frame's worth of instructions.
+// Run one 50 Hz frame: 17784 CPU cycles, with the VDG's line and frame
+// sync pulses (the frame pulse is BASIC's 50 Hz IRQ).
 void dragon_run_frame(void);
+
+uint64_t dragon_cycles(void);		// CPU cycles run since dragon_init
+unsigned dragon_irqs(void);		// IRQs taken since dragon_init
+
+// ---- Sound -----------------------------------------------------------------
+// Mono, signed 16-bit, made as the CPU runs (rate / 50 samples a frame).
+void dragon_audio_rate(unsigned rate);	// e.g. 48000; 0 = off (the default)
+unsigned dragon_audio_take(int16_t *buf, unsigned max);	// samples made so far
 
 // The 64 KB address space as the CPU sees it (video RAM, $FF22 etc).
 const uint8_t *dragon_memory(void);

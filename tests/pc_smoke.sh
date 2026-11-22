@@ -18,14 +18,14 @@ check() {	# check <screen> <wanted text>
 	fi
 }
 
-OUT=$($PC -f 300 -t '? 2+3*4\r10 GOTO 10\rRUN\r\b' "$ROM")
+OUT=$($PC -f 900 -t '? 2+3*4\r10 GOTO 10\rRUN\r\b' "$ROM")
 check "$OUT" "OK"
 check "$OUT" " 14"
 check "$OUT" "BREAK IN 10"
 [ $fail -eq 0 ] || printf '%s\n' "$OUT"
 
 # CLS 3 fills the screen with blue semigraphics blocks (shown as '#')
-OUT=$($PC -f 200 -t 'CLS 3\r' -p build/pc/cls3.ppm "$ROM")
+OUT=$($PC -f 300 -t 'CLS 3\r' -p build/pc/cls3.ppm "$ROM")
 if printf '%s\n' "$OUT" | sed -n 3p | grep -q '################################'; then
 	echo "PASS: CLS 3 draws block graphics"
 else
