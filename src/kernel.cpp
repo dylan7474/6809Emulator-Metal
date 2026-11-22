@@ -125,6 +125,7 @@ CKernel::CKernel (void)
 	m_nTop (0),
 	m_nAdminScale (2),
 	m_bAdminDirty (false),
+	m_bAdminClear (false),
 	m_bMuted (false),
 	m_nMessageUntil (0),
 	m_bTapeOpen (false),
@@ -1269,6 +1270,17 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 
 		UpdateNetwork (nNow);
 
+		// Tape motor starts/stops go in the log (a session can be followed)
+		static bool bMotorWas;
+		if (dragon_tape_motor () != bMotorWas)
+		{
+			bMotorWas = !bMotorWas;
+			Log ("Tape:   motor %s at %u.%01u s%s", bMotorWas ? "on" : "off",
+			     dragon_tape_pos_ms () / 1000, dragon_tape_pos_ms () % 1000 / 100,
+			     dragon_tape_inserted () ? "" : " (no tape inserted)");
+			FlushBootLog ();
+		}
+
 		if (nNow >= nNextUSB)
 		{
 			UpdateUSB ();
@@ -1328,8 +1340,13 @@ CStdlibApp::TShutdownMode CKernel::Run (void)
 		if (nNow - nStatsStart >= STATS_US)
 		{
 			unsigned nFrameUs = (unsigned) (nEmuUs / (nFrames ? nFrames : 1));
-			Log ("Dragon: %u frames in 10 s, %u us of CPU per frame%s",
-			     nFrames, nFrameUs, m_bTurbo ? " (turbo)" : "");
+			Log ("Dragon: %u frames in 10 s, %u us of CPU per frame, %u key reports%s%s",
+			     nFrames, nFrameUs, s_nKeyReports, m_bTurbo ? " (turbo)" : "",
+			     m_bAdmin ? " (admin screen open)" : "");
+			if (nReports % 6 == 5)
+			{
+				FlushBootLog ();		// once a minute (a quick append)
+			}
 			if (++nReports == SPEED_FILE_AT)
 			{
 				WriteSpeedFile (nFrameUs);

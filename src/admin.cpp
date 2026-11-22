@@ -407,10 +407,12 @@ void CKernel::TapeStatusText (char *pBuf, size_t nSize)
 		snprintf (pBuf, nSize, "NO TAPE");
 		return;
 	}
+	bool bEnd = dragon_tape_pos_ms () >= dragon_tape_len_ms ();
 	FormatMs (Pos, sizeof Pos, dragon_tape_pos_ms ());
 	FormatMs (Len, sizeof Len, dragon_tape_len_ms ());
 	snprintf (pBuf, nSize, "%.40s  %s/%sS  %s  MOTOR %s", m_TapeName, Pos, Len,
-		  dragon_tape_playing () ? "PLAY" : "STOP", dragon_tape_motor () ? "ON" : "OFF");
+		  bEnd ? "END" : dragon_tape_playing () ? "PLAY" : "STOP",
+		  dragon_tape_motor () ? "ON" : "OFF");
 }
 
 // The strip under the Dragon's picture: clock, tape, F12 hint, messages
@@ -422,7 +424,18 @@ void CKernel::DrawTapeStrip (void)
 		strcpy (Clock, "");
 	}
 	TapeStatusText (Tape, sizeof Tape);
-	if (m_Message[0] != '\0' && CTimer::GetClockTicks64 () < m_nMessageUntil)
+	// The Dragon is reading a tape that isn't there: it ignores the
+	// keyboard until a tape plays (as a real one does), so say how out
+	bool bStarved = dragon_tape_motor () && !dragon_tape_recording ()
+			&& (!dragon_tape_inserted () || !dragon_tape_playing ()
+			    || dragon_tape_pos_ms () >= dragon_tape_len_ms ());
+	if (bStarved)
+	{
+		snprintf (Text, sizeof Text, "%s  %s: CLOAD IS WAITING - F12 TO REWIND/CHOOSE, F1 TO RESET",
+			  Clock, !dragon_tape_inserted () ? "NO TAPE"
+			  : !dragon_tape_playing () ? "TAPE STOPPED" : "TAPE AT END");
+	}
+	else if (m_Message[0] != '\0' && CTimer::GetClockTicks64 () < m_nMessageUntil)
 	{
 		snprintf (Text, sizeof Text, "%s  %s", Clock, m_Message);
 	}
@@ -443,6 +456,7 @@ void CKernel::OpenAdmin (void)
 	m_nSel = 0;
 	m_nTop = 0;
 	m_bAdminDirty = true;
+	m_bAdminClear = true;
 	m_nAdminScale = m_nFBHeight >= 900 ? 3 : (m_nFBHeight >= 480 ? 2 : 1);
 	Log ("Admin:  opened (F12)");
 }
@@ -493,7 +507,13 @@ void CKernel::DrawAdmin (void)
 	}
 	unsigned s = m_nAdminScale;
 	unsigned nRows = m_nFBHeight / (12 * s);
-	FillScreen (Pixel (16, 24, 72));
+	if (m_bAdminClear)
+	{
+		// Only when the page changes: blanking every second (for the
+		// clock and counter) made the screen flicker
+		FillScreen (Pixel (16, 24, 72));
+		m_bAdminClear = false;
+	}
 
 	char Text[200], Clock[16];
 	if (!ClockText (Clock, sizeof Clock))
@@ -552,9 +572,17 @@ void CKernel::DrawAdmin (void)
 		{
 			m_nTop = m_nSel - nVisible + 1;
 		}
-		for (unsigned i = 0; i < nVisible && m_nTop + i < nCount; i++)
+		for (unsigned i = 0; i < nVisible; i++)
 		{
 			unsigned k = m_nTop + i;
+			if (k >= nCount)
+			{
+				if (nCount > 0)
+				{
+					AdminLine (nFirst + i, "", false, false);	// clears old rows in place
+				}
+				continue;
+			}
 			if (bFiles)
 			{
 				// name cut/padded to 44 by hand, then the size
@@ -590,10 +618,8 @@ void CKernel::DrawAdmin (void)
 		AdminLine (nFirst + 5, "ENTER = SHUT DOWN      ESC = BACK", false, false);
 	}
 
-	if (m_Message[0] != '\0' && CTimer::GetClockTicks64 () < m_nMessageUntil)
-	{
-		AdminLine (nRows - 3, m_Message, false, true);
-	}
+	AdminLine (nRows - 3, m_Message[0] != '\0' && CTimer::GetClockTicks64 () < m_nMessageUntil
+			      ? m_Message : "", false, true);
 	AdminLine (nRows - 2, m_nAdminScreen == AdminMenu
 			      ? "UP/DOWN: CHOOSE   ENTER: DO IT   ESC/F12: BACK TO THE DRAGON"
 			      : "UP/DOWN/PGUP/PGDN: CHOOSE   ENTER: DO IT   ESC: BACK", false, false);
@@ -601,6 +627,16 @@ void CKernel::DrawAdmin (void)
 }
 
 void CKernel::AdminKey (u8 Usage)
+{
+	TAdminScreen OldScreen = m_nAdminScreen;
+	AdminKeyDo (Usage);
+	if (m_nAdminScreen != OldScreen)
+	{
+		m_bAdminClear = true;
+	}
+}
+
+void CKernel::AdminKeyDo (u8 Usage)
 {
 	m_bAdminDirty = true;
 	unsigned nCount = m_nAdminScreen == AdminMenu ? ITEMS

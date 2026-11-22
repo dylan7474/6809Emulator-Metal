@@ -73,6 +73,7 @@ private:
 	void CloseAdmin (void);
 	void DrawAdmin (void);
 	void AdminKey (u8 Usage);
+	void AdminKeyDo (u8 Usage);
 	void AdminLine (unsigned nRow, const char *pText, bool bSelected, bool bTitle);
 	void Message (const char *pFormat, ...);
 	void ShutDown (void);
@@ -122,6 +123,7 @@ private:
 	TAdminScreen	m_nAdminScreen;
 	unsigned	m_nSel, m_nTop, m_nAdminScale;
 	bool		m_bAdminDirty;
+	bool		m_bAdminClear;		// blank the screen before the next draw
 	bool		m_bMuted;
 	char		m_Message[96];
 	u64		m_nMessageUntil;
