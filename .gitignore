@@ -20,3 +20,6 @@ local/
 *.WAV
 *.cas
 *.CAS
+
+# Demo tapes we made ourselves (BASIC graphics demos) are part of the card
+!sdcard/tapes/*.cas

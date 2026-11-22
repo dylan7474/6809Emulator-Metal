@@ -78,6 +78,9 @@ play in real time: the Dragon's motor relay starts and stops them, and
 the input copes with quiet and noisy recordings). `cmdline.txt`
 `tape=NAME.cas` inserts a tape at power-on.
 
+The card comes with two demo tapes: `CIRCLES` (`PMODE 4` lines and a
+circle) and `COLOURS` (`PMODE 3` with `PAINT`).
+
 `CSAVE "NAME"` (and `CSAVEM`, data files) record to `tapes/NAME.wav` (a
 real tape recording: play it into a real Dragon) and `tapes/NAME.cas`.
 An existing name is never overwritten: the new one becomes `NAME-2`,

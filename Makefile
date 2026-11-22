@@ -186,6 +186,8 @@ sdcard: all $(addprefix build/firmware/,$(FIRMWARE)) $(WLAN_FW_FILES)
 	mkdir -p build/sdcard/firmware
 	cp build/wlan-firmware/* build/sdcard/firmware/
 	cp sdcard/config.txt sdcard/cmdline.txt sdcard/wpa_supplicant.conf.example build/sdcard/
+	mkdir -p build/sdcard/tapes
+	cp sdcard/tapes/*.cas build/sdcard/tapes/
 	cp $(foreach t,$(TARGETS),build/$($(t)_KERNEL)) build/sdcard/
 	$(if $(filter pi4,$(TARGETS)),cp build/armstub8-rpi4.bin build/sdcard/)
 	@echo
