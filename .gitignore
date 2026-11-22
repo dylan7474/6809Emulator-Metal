@@ -14,3 +14,9 @@ build/
 
 # Your own SD card extras (ROM)
 local/
+
+# Test tapes and recordings (copyrighted software, your own recordings)
+*.wav
+*.WAV
+*.cas
+*.CAS
